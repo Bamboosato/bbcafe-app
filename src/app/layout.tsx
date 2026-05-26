@@ -16,7 +16,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ja">
-      <body>{children}</body>
+      <body>
+        <div className="site-frame">
+          {children}
+          <footer className="app-footer">© 2026 Bamboosato v1.0.0</footer>
+        </div>
+      </body>
     </html>
   );
 }
