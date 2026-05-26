@@ -108,25 +108,25 @@ export async function listVisibleMessages(lineAccountId: string, limit = 100) {
   const db = getAdminDb();
   const now = Timestamp.now();
   const normalizedLimit = normalizeLimit(limit);
-  const [recentSnapshot, unexpiredSnapshot] = await Promise.all([
-    db
-      .collection("messages")
-      .where("lineAccountId", "==", lineAccountId)
-      .orderBy("sentAt", "desc")
-      .limit(PROTECTED_RECENT_COUNT)
-      .get(),
-    db
+  const recentSnapshot = await getRecentMessagesSnapshot(lineAccountId, PROTECTED_RECENT_COUNT);
+  const records = new Map<string, MessageRecord>();
+
+  for (const doc of recentSnapshot.docs) {
+    records.set(doc.id, toMessageRecord(doc.id, doc.data()));
+  }
+
+  if (recentSnapshot.size >= PROTECTED_RECENT_COUNT) {
+    const unexpiredSnapshot = await db
       .collection("messages")
       .where("lineAccountId", "==", lineAccountId)
       .where("expiresAt", ">", now)
       .orderBy("expiresAt", "desc")
       .limit(PROTECTED_RECENT_COUNT)
-      .get(),
-  ]);
-  const records = new Map<string, MessageRecord>();
+      .get();
 
-  for (const doc of [...recentSnapshot.docs, ...unexpiredSnapshot.docs]) {
-    records.set(doc.id, toMessageRecord(doc.id, doc.data()));
+    for (const doc of unexpiredSnapshot.docs) {
+      records.set(doc.id, toMessageRecord(doc.id, doc.data()));
+    }
   }
 
   return [...records.values()]
@@ -150,12 +150,7 @@ export async function getVisibleMessage(lineAccountId: string, messageId: string
     return toMessageView(record);
   }
 
-  const recentSnapshot = await db
-    .collection("messages")
-    .where("lineAccountId", "==", lineAccountId)
-    .orderBy("sentAt", "desc")
-    .limit(PROTECTED_RECENT_COUNT)
-    .get();
+  const recentSnapshot = await getRecentMessagesSnapshot(lineAccountId, PROTECTED_RECENT_COUNT);
 
   return recentSnapshot.docs.some((doc) => doc.id === messageId) ? toMessageView(record) : null;
 }
@@ -312,6 +307,29 @@ function normalizeLimit(value: number, max = 200) {
   }
 
   return Math.min(value, max);
+}
+
+async function getRecentMessagesSnapshot(lineAccountId: string, limit: number) {
+  const db = getAdminDb();
+
+  try {
+    return await db
+      .collection("messages")
+      .where("lineAccountId", "==", lineAccountId)
+      .orderBy("sentAt", "desc")
+      .limit(limit)
+      .get();
+  } catch (error) {
+    if (!isMissingIndexError(error)) {
+      throw error;
+    }
+
+    return db.collection("messages").where("lineAccountId", "==", lineAccountId).limit(limit).get();
+  }
+}
+
+function isMissingIndexError(error: unknown) {
+  return error instanceof Error && error.message.includes("FAILED_PRECONDITION");
 }
 
 function toMessageRecord(messageId: string, data: FirebaseFirestore.DocumentData): MessageRecord {
