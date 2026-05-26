@@ -249,4 +249,8 @@ label {
   .settings-grid {
     grid-template-columns: 1fr;
   }
+
+  .message-detail-panel {
+    display: none;
+  }
 }

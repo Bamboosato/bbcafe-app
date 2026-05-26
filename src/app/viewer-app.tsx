@@ -235,7 +235,7 @@ function MessageList({
             <span>{formatTime(message.sentAt)}</span>
             <span>{sourceLabel(message)}</span>
           </span>
-          <span className="message-text">{truncate(message.text, 110)}</span>
+          <span className="message-text">{message.text}</span>
         </button>
       ))}
     </div>
@@ -246,11 +246,11 @@ function MessageDetail({ message }: { message: MessageView | null }) {
   const source = useMemo(() => (message ? sourceLabel(message) : ""), [message]);
 
   if (!message) {
-    return <aside className="panel">一覧からメッセージを選択してください。</aside>;
+    return <aside className="panel message-detail-panel">一覧からメッセージを選択してください。</aside>;
   }
 
   return (
-    <aside className="panel">
+    <aside className="panel message-detail-panel">
       <div className="message-meta">
         <strong>{message.senderDisplayName}</strong>
         <span>{formatTime(message.sentAt)}</span>
@@ -267,10 +267,6 @@ function sourceLabel(message: MessageView) {
   }
 
   return "個別トーク";
-}
-
-function truncate(value: string, maxLength: number) {
-  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
 function formatTime(value: string) {
