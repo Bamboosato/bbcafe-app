@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/delete-expired-messages",
+      "schedule": "0 18 * * *"
+    }
+  ]
+}

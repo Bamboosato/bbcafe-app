@@ -1,0 +1,249 @@
+:root {
+  --background: #f6f8fb;
+  --border: #d7dde6;
+  --danger: #c93535;
+  --danger-strong: #a92323;
+  --foreground: #1d2633;
+  --muted: #637083;
+  --panel: #ffffff;
+  --primary: #1b6f5d;
+  --primary-strong: #155647;
+  --surface: #edf2f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family:
+    Arial,
+    "Hiragino Kaku Gothic ProN",
+    "Yu Gothic",
+    Meiryo,
+    sans-serif;
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  min-height: 40px;
+  padding: 8px 14px;
+}
+
+button:hover {
+  background: var(--primary-strong);
+}
+
+button.secondary {
+  background: #ffffff;
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+button.secondary:hover {
+  background: var(--surface);
+}
+
+button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+button.danger:hover {
+  background: var(--danger-strong);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+input {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-height: 40px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+label {
+  color: var(--muted);
+  display: grid;
+  font-size: 13px;
+  gap: 6px;
+}
+
+.app-shell {
+  display: grid;
+  gap: 18px;
+  margin: 0 auto;
+  max-width: 1120px;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.app-header {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.app-title {
+  display: grid;
+  gap: 4px;
+}
+
+.app-title h1 {
+  font-size: 24px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.app-title p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.login-panel {
+  align-self: start;
+  justify-self: center;
+  margin-top: 64px;
+  max-width: 420px;
+  width: 100%;
+}
+
+.form-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.status-text,
+.error-text {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.error-text {
+  color: var(--danger);
+}
+
+.message-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+}
+
+.message-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.message-row {
+  background: #ffffff;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+  display: grid;
+  gap: 6px;
+  min-height: auto;
+  padding: 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.message-row:hover,
+.message-row.active {
+  background: #eaf5f2;
+}
+
+.message-row:last-child {
+  border-bottom: 0;
+}
+
+.message-meta {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.message-text {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.detail-text {
+  line-height: 1.7;
+  margin: 16px 0 0;
+  white-space: pre-wrap;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-grid .full {
+  grid-column: 1 / -1;
+}
+
+.table-like {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@media (max-width: 820px) {
+  .app-shell {
+    padding: 16px;
+  }
+
+  .app-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .message-layout,
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
