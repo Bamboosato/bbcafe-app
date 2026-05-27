@@ -138,6 +138,25 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   }, [checkForAppUpdate]);
 
   useEffect(() => {
+    if (!("serviceWorker" in navigator)) {
+      return;
+    }
+
+    function registerServiceWorker() {
+      void navigator.serviceWorker.register("/sw.js").then((registration) => registration.update());
+    }
+
+    if (document.readyState === "complete") {
+      registerServiceWorker();
+      return;
+    }
+
+    window.addEventListener("load", registerServiceWorker, { once: true });
+
+    return () => window.removeEventListener("load", registerServiceWorker);
+  }, []);
+
+  useEffect(() => {
     if (!accountMenuOpen) {
       return;
     }
