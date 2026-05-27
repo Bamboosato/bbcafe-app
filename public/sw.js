@@ -80,8 +80,14 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
-        if (client.url === targetUrl && "focus" in client) {
-          return client.focus();
+        if (isSameAppUrl(client.url, targetUrl) && "focus" in client) {
+          return client.focus().then((focusedClient) => {
+            focusedClient.postMessage({
+              type: "bbcafe:notification-click",
+            });
+
+            return focusedClient;
+          });
         }
       }
 
@@ -100,4 +106,11 @@ function readPushPayload(event) {
   } catch {
     return {};
   }
+}
+
+function isSameAppUrl(clientUrl, targetUrl) {
+  const client = new URL(clientUrl);
+  const target = new URL(targetUrl);
+
+  return client.origin === target.origin && client.pathname === target.pathname;
 }
