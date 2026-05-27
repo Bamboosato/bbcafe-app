@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  filterMessages,
+  matchesMessageFilter,
+  MESSAGE_FILTER_OPTIONS,
+  type MessageFilter,
+} from "@/features/messages/messageFilter";
 import type { MessageView } from "@/features/messages/types";
 
 type ApiEnvelope<T> = {
@@ -12,6 +18,7 @@ type ApiEnvelope<T> = {
 
 type SessionResponse = {
   authenticated: boolean;
+  viewerSharedId: null | string;
 };
 
 type MessagesResponse = {
@@ -28,12 +35,17 @@ export default function ViewerApp() {
   const [sharedId, setSharedId] = useState("bbcafe");
   const [password, setPassword] = useState("");
   const [messages, setMessages] = useState<MessageView[]>([]);
+  const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
 
   const selectedId = selectedMessage?.messageId ?? null;
+  const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
+  const messageListStatus = loadingMessages ? "更新中です。" : status || "60秒ごとに自動更新します。";
 
   const loadMessages = useCallback(async () => {
     setLoadingMessages(true);
@@ -50,13 +62,13 @@ export default function ViewerApp() {
     const nextMessages = result.data?.messages ?? [];
     setMessages(nextMessages);
 
-    if (selectedId && !nextMessages.some((message) => message.messageId === selectedId)) {
-      setSelectedMessage(null);
-    }
+    setSelectedMessage((current) =>
+      current && !nextMessages.some((message) => message.messageId === current.messageId) ? null : current,
+    );
 
     setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
     setLoadingMessages(false);
-  }, [selectedId]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -69,6 +81,10 @@ export default function ViewerApp() {
       const nextAuthenticated = Boolean(result.data?.authenticated);
       setAuthenticated(nextAuthenticated);
       setCheckingSession(false);
+
+      if (result.data?.viewerSharedId) {
+        setSharedId(result.data.viewerSharedId);
+      }
 
       if (nextAuthenticated) {
         void loadMessages();
@@ -87,10 +103,60 @@ export default function ViewerApp() {
 
     const timer = window.setInterval(() => {
       void loadMessages();
-    }, 30000);
+    }, 60000);
 
     return () => window.clearInterval(timer);
   }, [authenticated, loadMessages]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (accountMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setAccountMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (!selectedMessage && !accountMenuOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      setSelectedMessage(null);
+      setAccountMenuOpen(false);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [accountMenuOpen, selectedMessage]);
+
+  useEffect(() => {
+    if (!selectedMessage) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [selectedMessage]);
 
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -110,6 +176,10 @@ export default function ViewerApp() {
       return;
     }
 
+    if (result.data.viewerSharedId) {
+      setSharedId(result.data.viewerSharedId);
+    }
+
     setPassword("");
     setAuthenticated(true);
     await loadMessages();
@@ -118,8 +188,15 @@ export default function ViewerApp() {
   async function handleLogout() {
     await fetchJson("/api/viewer/logout", { method: "POST" });
     setAuthenticated(false);
+    setAccountMenuOpen(false);
+    setMessageFilter("all");
     setMessages([]);
     setSelectedMessage(null);
+  }
+
+  function handleFilterChange(nextFilter: MessageFilter) {
+    setMessageFilter(nextFilter);
+    setSelectedMessage((current) => (current && !matchesMessageFilter(current, nextFilter) ? null : current));
   }
 
   async function handleSelect(messageId: string) {
@@ -132,6 +209,10 @@ export default function ViewerApp() {
     }
 
     setSelectedMessage(result.data?.message ?? null);
+  }
+
+  function closeMessageModal() {
+    setSelectedMessage(null);
   }
 
   if (checkingSession) {
@@ -184,80 +265,137 @@ export default function ViewerApp() {
           <p>LINE公式アカウントへ届いたテキストメッセージ</p>
         </div>
         <div className="admin-actions">
-          <button className="secondary" onClick={() => void loadMessages()} type="button">
-            手動更新
-          </button>
-          <button className="secondary" onClick={() => void handleLogout()} type="button">
-            ログアウト
-          </button>
+          <div className="account-menu" ref={accountMenuRef}>
+            <button
+              aria-expanded={accountMenuOpen}
+              aria-haspopup="menu"
+              aria-label="アカウントメニューを開く"
+              className={`account-button ${accountMenuOpen ? "active" : ""}`}
+              onClick={() => setAccountMenuOpen((current) => !current)}
+              type="button"
+            >
+              <span aria-hidden="true" className="account-icon" />
+            </button>
+            {accountMenuOpen ? (
+              <div className="account-popover" role="menu">
+                <div className="account-summary">
+                  <span>共有ID</span>
+                  <strong>{sharedId}</strong>
+                </div>
+                <button className="secondary account-logout" onClick={() => void handleLogout()} role="menuitem" type="button">
+                  ログアウト
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
 
-      <section className="toolbar">
-        <p className="status-text">
-          {loadingMessages ? "更新中です。" : status || "30秒ごとに自動更新します。"}
-        </p>
-        {error ? <p className="error-text">{error}</p> : null}
-      </section>
+      {error ? (
+        <section className="toolbar">
+          <p className="error-text">{error}</p>
+        </section>
+      ) : null}
 
       <section className="message-layout">
-        <MessageList messages={messages} onSelect={handleSelect} selectedId={selectedId} />
-        <MessageDetail message={selectedMessage} />
+        <MessageList
+          filter={messageFilter}
+          messages={filteredMessages}
+          onFilterChange={handleFilterChange}
+          onSelect={handleSelect}
+          selectedId={selectedId}
+          statusText={messageListStatus}
+          totalCount={messages.length}
+        />
       </section>
+      <MessageDetailModal message={selectedMessage} onClose={closeMessageModal} />
     </main>
   );
 }
 
 function MessageList({
+  filter,
   messages,
+  onFilterChange,
   onSelect,
   selectedId,
+  statusText,
+  totalCount,
 }: {
+  filter: MessageFilter;
   messages: MessageView[];
+  onFilterChange: (filter: MessageFilter) => void;
   onSelect: (messageId: string) => void;
   selectedId: null | string;
+  statusText: string;
+  totalCount: number;
 }) {
-  if (!messages.length) {
-    return <div className="panel">表示できるメッセージはありません。</div>;
-  }
-
   return (
-    <div className="message-list">
-      {messages.map((message) => (
-        <button
-          className={`message-row ${message.messageId === selectedId ? "active" : ""}`}
-          key={message.messageId}
-          onClick={() => onSelect(message.messageId)}
-          type="button"
-        >
-          <span className="message-meta">
-            <strong>{message.senderDisplayName}</strong>
-            <span>{formatTime(message.sentAt)}</span>
-            <span>{sourceLabel(message)}</span>
-          </span>
-          <span className="message-text">{message.text}</span>
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="message-list-toolbar">
+        <div aria-label="メッセージ種別フィルター" className="message-filter" role="group">
+          {MESSAGE_FILTER_OPTIONS.map((option) => (
+            <button
+              aria-pressed={option.value === filter}
+              className={`filter-button ${option.value === filter ? "active" : ""}`}
+              key={option.value}
+              onClick={() => onFilterChange(option.value)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <p className="message-list-status status-text">{statusText}</p>
+      </div>
+
+      {messages.length ? (
+        <div className="message-list">
+          {messages.map((message) => (
+            <button
+              className={`message-row ${message.messageId === selectedId ? "active" : ""}`}
+              key={message.messageId}
+              onClick={() => onSelect(message.messageId)}
+              type="button"
+            >
+              <span className="message-meta">
+                <strong>{message.senderDisplayName}</strong>
+                <span>{formatTime(message.sentAt)}</span>
+                <span>{sourceLabel(message)}</span>
+              </span>
+              <span className="message-text">{message.text}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="panel empty-message-panel">
+          {totalCount ? "このフィルターに該当するメッセージはありません。" : "表示できるメッセージはありません。"}
+        </div>
+      )}
+    </>
   );
 }
 
-function MessageDetail({ message }: { message: MessageView | null }) {
-  const source = useMemo(() => (message ? sourceLabel(message) : ""), [message]);
-
+function MessageDetailModal({ message, onClose }: { message: MessageView | null; onClose: () => void }) {
   if (!message) {
-    return <aside className="panel message-detail-panel">一覧からメッセージを選択してください。</aside>;
+    return null;
   }
 
   return (
-    <aside className="panel message-detail-panel">
-      <div className="message-meta">
-        <strong>{message.senderDisplayName}</strong>
-        <span>{formatTime(message.sentAt)}</span>
-        <span>{source}</span>
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div
+        aria-label="メッセージ全文"
+        aria-modal="true"
+        className="message-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <button aria-label="閉じる" className="secondary modal-close-button" onClick={onClose} type="button">
+          ×
+        </button>
+        <p className="message-modal-text">{message.text}</p>
       </div>
-      <p className="detail-text">{message.text}</p>
-    </aside>
+    </div>
   );
 }
 

@@ -115,7 +115,7 @@ label {
 }
 
 .app-header {
-  align-items: center;
+  align-items: flex-start;
   display: flex;
   gap: 16px;
   justify-content: space-between;
@@ -123,7 +123,9 @@ label {
 
 .app-title {
   display: grid;
+  flex: 1 1 auto;
   gap: 4px;
+  min-width: 0;
 }
 
 .app-title h1 {
@@ -179,13 +181,61 @@ label {
 
 .message-layout {
   display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  gap: 10px;
+  grid-template-areas:
+    "list-toolbar"
+    "list";
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.message-list-toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  grid-area: list-toolbar;
+  justify-content: space-between;
+}
+
+.message-filter {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filter-button {
+  background: #ffffff;
+  border-color: var(--border);
+  color: var(--foreground);
+  min-height: 36px;
+  padding: 7px 12px;
+}
+
+.filter-button:hover {
+  background: var(--surface);
+}
+
+.filter-button.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.filter-button.active:hover {
+  background: var(--primary-strong);
+}
+
+.message-list-status {
+  flex: 1 1 180px;
+  text-align: right;
 }
 
 .message-list {
   border: 1px solid var(--border);
   border-radius: 8px;
+  grid-area: list;
   overflow: hidden;
 }
 
@@ -225,6 +275,11 @@ label {
   overflow-wrap: anywhere;
 }
 
+.empty-message-panel {
+  color: var(--muted);
+  grid-area: list;
+}
+
 .detail-text {
   line-height: 1.7;
   margin: 16px 0 0;
@@ -247,10 +302,140 @@ label {
 }
 
 .admin-actions {
-  align-items: center;
+  align-items: flex-start;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  margin-left: auto;
+}
+
+.account-menu {
+  position: relative;
+}
+
+.account-button {
+  align-items: center;
+  background: #ffffff;
+  border-color: var(--border);
+  border-radius: 999px;
+  color: var(--foreground);
+  display: inline-flex;
+  height: 42px;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0;
+  width: 42px;
+}
+
+.account-button:hover,
+.account-button.active {
+  background: var(--surface);
+}
+
+.account-icon {
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  display: block;
+  height: 22px;
+  position: relative;
+  width: 22px;
+}
+
+.account-icon::before {
+  background: currentColor;
+  border-radius: 999px;
+  content: "";
+  height: 6px;
+  left: 6px;
+  position: absolute;
+  top: 4px;
+  width: 6px;
+}
+
+.account-icon::after {
+  border: 2px solid currentColor;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  bottom: 4px;
+  content: "";
+  height: 5px;
+  left: 4px;
+  position: absolute;
+  width: 10px;
+}
+
+.account-popover {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 16px 32px rgb(29 38 51 / 14%);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(260px, calc(100vw - 32px));
+  z-index: 20;
+}
+
+.account-summary {
+  display: grid;
+  gap: 4px;
+}
+
+.account-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-summary strong {
+  overflow-wrap: anywhere;
+}
+
+.account-logout {
+  width: 100%;
+}
+
+.modal-backdrop {
+  align-items: center;
+  background: rgb(29 38 51 / 42%);
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  overflow: auto;
+  padding: 16px;
+  position: fixed;
+  z-index: 100;
+}
+
+.message-modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 24px 60px rgb(29 38 51 / 22%);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: min(78dvh, calc(100dvh - 32px), 720px);
+  max-width: 720px;
+  padding: 14px;
+  width: 100%;
+}
+
+.modal-close-button {
+  height: 36px;
+  justify-self: end;
+  min-height: 36px;
+  padding: 0;
+  width: 36px;
+}
+
+.message-modal-text {
+  line-height: 1.7;
+  margin: 8px 0 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 820px) {
@@ -262,17 +447,7 @@ label {
     padding: 0 16px 16px;
   }
 
-  .app-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .message-layout,
   .settings-grid {
     grid-template-columns: 1fr;
-  }
-
-  .message-detail-panel {
-    display: none;
   }
 }

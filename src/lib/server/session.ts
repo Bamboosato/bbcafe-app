@@ -14,6 +14,7 @@ export type ViewerSessionPayload = {
   exp: number;
   lineAccountId: string;
   role: "viewer";
+  viewerSharedId?: string;
 };
 
 type SessionPayload = AdminSessionPayload | ViewerSessionPayload;
@@ -42,12 +43,13 @@ export function createAdminSessionCookieValue(now = Date.now()) {
   );
 }
 
-export function createViewerSessionCookieValue(lineAccountId: string, now = Date.now()) {
+export function createViewerSessionCookieValue(lineAccountId: string, now = Date.now(), viewerSharedId?: string) {
   return createSessionCookieValue(
     {
       exp: Math.floor(now / 1000) + SESSION_TTL_SECONDS,
       lineAccountId,
       role: "viewer",
+      ...(viewerSharedId?.trim() ? { viewerSharedId: viewerSharedId.trim() } : {}),
     },
     requiredSessionSecret(),
   );
