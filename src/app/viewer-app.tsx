@@ -29,7 +29,11 @@ type MessageResponse = {
   message: MessageView;
 };
 
-export default function ViewerApp() {
+type AppVersionResponse = {
+  version: string;
+};
+
+export default function ViewerApp({ appVersion }: { appVersion: string }) {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [sharedId, setSharedId] = useState("bbcafe");
@@ -46,6 +50,15 @@ export default function ViewerApp() {
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
   const messageListStatus = loadingMessages ? "更新中です。" : status || "60秒ごとに自動更新します。";
+
+  const checkForAppUpdate = useCallback(async () => {
+    const result = await fetchJson<AppVersionResponse>("/api/app-version", { cache: "no-store" });
+    const latestVersion = result.data?.version?.trim();
+
+    if (latestVersion && latestVersion !== appVersion) {
+      window.location.reload();
+    }
+  }, [appVersion]);
 
   const loadMessages = useCallback(async () => {
     setLoadingMessages(true);
@@ -107,6 +120,22 @@ export default function ViewerApp() {
 
     return () => window.clearInterval(timer);
   }, [authenticated, loadMessages]);
+
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void checkForAppUpdate();
+      }
+    }
+
+    window.addEventListener("focus", checkForAppUpdate);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", checkForAppUpdate);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [checkForAppUpdate]);
 
   useEffect(() => {
     if (!accountMenuOpen) {
