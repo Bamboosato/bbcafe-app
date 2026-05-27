@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { safeStringEqual, stableHash } from "@/lib/server/crypto";
 import { getLineAccount } from "./lineAccounts";
 import { saveTextMessage, deleteMessagesByLineMessageId } from "./messages";
+import { sendNewMessagePushNotifications } from "./pushNotifications";
 
 const FALLBACK_GROUP_NAME = "ユーザグループ";
 const FALLBACK_USER_NAME = "不明なユーザー";
@@ -113,6 +114,18 @@ async function processTextMessageEvent(
     text,
     webhookEventId,
   });
+
+  if (result.created) {
+    await sendNewMessagePushNotifications({
+      lineAccountId,
+      viewerSharedId: account.viewerSharedId,
+    }).catch((error) => {
+      console.warn("[line-webhook] push notification failed", {
+        lineAccountId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
 
   return result.created;
 }

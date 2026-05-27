@@ -49,3 +49,55 @@ self.addEventListener("fetch", (event) => {
     }),
   );
 });
+
+self.addEventListener("push", (event) => {
+  const payload = readPushPayload(event);
+  const title = typeof payload.title === "string" && payload.title ? payload.title : "BB Cafe Messages";
+  const url = typeof payload.url === "string" && payload.url ? payload.url : "/";
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      badge: "/apple-icon.png",
+      body:
+        typeof payload.body === "string" && payload.body
+          ? payload.body
+          : "新しいメッセージがあります",
+      data: {
+        url,
+      },
+      icon: "/app-icon-512.png",
+      tag: typeof payload.tag === "string" && payload.tag ? payload.tag : "new-message",
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const rawUrl = event.notification.data?.url || "/";
+  const targetUrl = new URL(rawUrl, self.location.origin).href;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if (client.url === targetUrl && "focus" in client) {
+          return client.focus();
+        }
+      }
+
+      return self.clients.openWindow(targetUrl);
+    }),
+  );
+});
+
+function readPushPayload(event) {
+  if (!event.data) {
+    return {};
+  }
+
+  try {
+    return event.data.json();
+  } catch {
+    return {};
+  }
+}
