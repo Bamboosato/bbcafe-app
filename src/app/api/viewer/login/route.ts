@@ -63,6 +63,7 @@ export async function POST(request: Request) {
     const response = NextResponse.json({
       data: {
         authenticated: true,
+        viewerSharedId: account.viewerSharedId,
       },
       meta: {
         requestId,
@@ -71,7 +72,7 @@ export async function POST(request: Request) {
 
     response.cookies.set(
       VIEWER_SESSION_COOKIE,
-      createViewerSessionCookieValue(lineAccountId),
+      createViewerSessionCookieValue(lineAccountId, Date.now(), account.viewerSharedId),
       sessionCookieOptions(),
     );
 

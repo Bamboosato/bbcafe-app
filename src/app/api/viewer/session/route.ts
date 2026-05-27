@@ -10,6 +10,7 @@ export async function GET(request: Request) {
     {
       authenticated: Boolean(payload),
       lineAccountId: payload?.lineAccountId ?? null,
+      viewerSharedId: payload?.viewerSharedId ?? null,
     },
     requestId,
   );

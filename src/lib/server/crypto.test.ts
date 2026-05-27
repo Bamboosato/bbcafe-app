@@ -23,9 +23,11 @@ describe("server crypto helpers", () => {
   it("verifies viewer session cookies by role", () => {
     process.env.SESSION_SECRET = "test-secret";
 
-    const cookie = createViewerSessionCookieValue("default", 0);
+    const cookie = createViewerSessionCookieValue("default", 0, "bbcafe");
+    const payload = verifyViewerSessionCookie(cookie, 1000);
 
-    expect(verifyViewerSessionCookie(cookie, 1000)?.lineAccountId).toBe("default");
+    expect(payload?.lineAccountId).toBe("default");
+    expect(payload?.viewerSharedId).toBe("bbcafe");
     expect(verifyAdminSessionCookie(cookie, 1000)).toBeNull();
   });
 });
