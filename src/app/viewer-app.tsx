@@ -33,6 +33,10 @@ type AppVersionResponse = {
   version: string;
 };
 
+type PushPublicKeyResponse = {
+  publicKey: string;
+};
+
 export default function ViewerApp({ appVersion }: { appVersion: string }) {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
@@ -42,6 +46,11 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [pushCapabilityChecked, setPushCapabilityChecked] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushStatus, setPushStatus] = useState("");
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushUpdating, setPushUpdating] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -143,7 +152,7 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     }
 
     function registerServiceWorker() {
-      void navigator.serviceWorker.register("/sw.js").then((registration) => registration.update());
+      void ensureServiceWorkerRegistration();
     }
 
     if (document.readyState === "complete") {
@@ -155,6 +164,50 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
 
     return () => window.removeEventListener("load", registerServiceWorker);
   }, []);
+
+  useEffect(() => {
+    if (!authenticated) {
+      return undefined;
+    }
+
+    let active = true;
+
+    async function detectPushSubscription() {
+      if (!isPushNotificationSupported()) {
+        if (active) {
+          setPushEnabled(false);
+          setPushSupported(false);
+          setPushCapabilityChecked(true);
+        }
+        return;
+      }
+
+      try {
+        const registration = await ensureServiceWorkerRegistration();
+        const subscription = await registration.pushManager.getSubscription();
+
+        if (!active) {
+          return;
+        }
+
+        setPushEnabled(Boolean(subscription));
+        setPushSupported(true);
+        setPushCapabilityChecked(true);
+      } catch {
+        if (active) {
+          setPushEnabled(false);
+          setPushSupported(false);
+          setPushCapabilityChecked(true);
+        }
+      }
+    }
+
+    void detectPushSubscription();
+
+    return () => {
+      active = false;
+    };
+  }, [authenticated]);
 
   useEffect(() => {
     if (!accountMenuOpen) {
@@ -206,6 +259,113 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     };
   }, [selectedMessage]);
 
+  async function enablePushNotifications() {
+    if (!isPushNotificationSupported()) {
+      throw new Error("この端末では通知を利用できません。");
+    }
+
+    if (Notification.permission === "denied") {
+      throw new Error("ブラウザで通知がブロックされています。");
+    }
+
+    const permission =
+      Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+
+    if (permission !== "granted") {
+      throw new Error("通知が許可されませんでした。");
+    }
+
+    const publicKeyResult = await fetchJson<PushPublicKeyResponse>("/api/push/public-key", {
+      cache: "no-store",
+    });
+
+    if (publicKeyResult.error || !publicKeyResult.data?.publicKey) {
+      throw new Error(publicKeyResult.error?.message ?? "通知設定を取得できません。");
+    }
+
+    const registration = await ensureServiceWorkerRegistration();
+    const existingSubscription = await registration.pushManager.getSubscription();
+    const subscription =
+      existingSubscription ??
+      (await registration.pushManager.subscribe({
+        applicationServerKey: urlBase64ToUint8Array(publicKeyResult.data.publicKey),
+        userVisibleOnly: true,
+      }));
+    const result = await fetchJson<{ subscribed: boolean }>("/api/push/subscription", {
+      body: JSON.stringify({ subscription: subscription.toJSON() }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+
+    if (result.error) {
+      if (!existingSubscription) {
+        await subscription.unsubscribe().catch(() => undefined);
+      }
+
+      throw new Error(result.error.message);
+    }
+
+    setPushEnabled(true);
+    setPushStatus("通知を有効にしました。");
+  }
+
+  async function disablePushNotifications({ silent = false }: { silent?: boolean } = {}) {
+    if (!isPushNotificationSupported()) {
+      setPushEnabled(false);
+      return;
+    }
+
+    const registration = await ensureServiceWorkerRegistration();
+    const subscription = await registration.pushManager.getSubscription();
+
+    if (!subscription) {
+      setPushEnabled(false);
+      if (!silent) {
+        setPushStatus("通知は停止中です。");
+      }
+      return;
+    }
+
+    const result = await fetchJson<{ subscribed: boolean }>("/api/push/subscription", {
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "DELETE",
+    });
+
+    if (result.error) {
+      throw new Error(result.error.message);
+    }
+
+    await subscription.unsubscribe();
+    setPushEnabled(false);
+
+    if (!silent) {
+      setPushStatus("通知を停止しました。");
+    }
+  }
+
+  async function handlePushToggle(nextEnabled: boolean) {
+    setPushUpdating(true);
+    setPushStatus("");
+    setError("");
+
+    try {
+      if (nextEnabled) {
+        await enablePushNotifications();
+      } else {
+        await disablePushNotifications();
+      }
+    } catch (error) {
+      setPushStatus(error instanceof Error ? error.message : "通知設定を更新できません。");
+    } finally {
+      setPushUpdating(false);
+    }
+  }
+
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -234,11 +394,20 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   }
 
   async function handleLogout() {
+    if (pushEnabled) {
+      await disablePushNotifications({ silent: true }).catch(() => undefined);
+    }
+
     await fetchJson("/api/viewer/logout", { method: "POST" });
     setAuthenticated(false);
     setAccountMenuOpen(false);
     setMessageFilter("all");
     setMessages([]);
+    setPushCapabilityChecked(false);
+    setPushEnabled(false);
+    setPushStatus("");
+    setPushSupported(false);
+    setPushUpdating(false);
     setSelectedMessage(null);
   }
 
@@ -329,6 +498,32 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
                 <div className="account-summary">
                   <span>共有ID</span>
                   <strong>{sharedId}</strong>
+                </div>
+                <div className="notification-setting" role="none">
+                  <label className="notification-toggle">
+                    <span className="notification-toggle-copy">
+                      <span className="notification-toggle-title">新着通知</span>
+                      <span className="notification-toggle-state">
+                        {pushEnabled ? "オン" : "オフ"}
+                      </span>
+                    </span>
+                    <span className="toggle-switch">
+                      <input
+                        aria-label="新着通知"
+                        checked={pushEnabled}
+                        disabled={pushUpdating || !pushCapabilityChecked || !pushSupported}
+                        onChange={(event) => void handlePushToggle(event.target.checked)}
+                        role="switch"
+                        type="checkbox"
+                      />
+                      <span className="toggle-slider" />
+                    </span>
+                  </label>
+                  {pushStatus || (pushCapabilityChecked && !pushSupported) ? (
+                    <p aria-live="polite" className="notification-status">
+                      {pushStatus || "この端末では通知を利用できません。"}
+                    </p>
+                  ) : null}
                 </div>
                 <button className="secondary account-logout" onClick={() => void handleLogout()} role="menuitem" type="button">
                   ログアウト
@@ -475,4 +670,30 @@ async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promi
   }
 
   return payload;
+}
+
+function isPushNotificationSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+async function ensureServiceWorkerRegistration() {
+  const registration =
+    (await navigator.serviceWorker.getRegistration("/")) ?? (await navigator.serviceWorker.register("/sw.js"));
+
+  await registration.update().catch(() => undefined);
+
+  return registration;
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = `${value}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let index = 0; index < rawData.length; index += 1) {
+    outputArray[index] = rawData.charCodeAt(index);
+  }
+
+  return outputArray;
 }
