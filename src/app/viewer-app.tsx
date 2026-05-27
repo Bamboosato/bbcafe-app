@@ -55,6 +55,8 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const authenticatedRef = useRef(false);
+  const loadingMessagesRef = useRef(false);
 
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
@@ -70,27 +72,43 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   }, [appVersion]);
 
   const loadMessages = useCallback(async () => {
-    setLoadingMessages(true);
-    setError("");
-
-    const result = await fetchJson<MessagesResponse>("/api/messages?limit=100");
-
-    if (result.error) {
-      setError(result.error.message);
-      setLoadingMessages(false);
+    if (loadingMessagesRef.current) {
       return;
     }
 
-    const nextMessages = result.data?.messages ?? [];
-    setMessages(nextMessages);
+    loadingMessagesRef.current = true;
+    setLoadingMessages(true);
+    setError("");
 
-    setSelectedMessage((current) =>
-      current && !nextMessages.some((message) => message.messageId === current.messageId) ? null : current,
-    );
+    try {
+      const result = await fetchJson<MessagesResponse>("/api/messages?limit=100", {
+        cache: "no-store",
+      });
 
-    setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
-    setLoadingMessages(false);
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      const nextMessages = result.data?.messages ?? [];
+      setMessages(nextMessages);
+
+      setSelectedMessage((current) =>
+        current && !nextMessages.some((message) => message.messageId === current.messageId) ? null : current,
+      );
+
+      setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
+    } finally {
+      loadingMessagesRef.current = false;
+      setLoadingMessages(false);
+    }
   }, []);
+
+  const refreshVisibleMessages = useCallback(() => {
+    if (authenticatedRef.current) {
+      void loadMessages();
+    }
+  }, [loadMessages]);
 
   useEffect(() => {
     let active = true;
@@ -119,6 +137,10 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   }, [loadMessages]);
 
   useEffect(() => {
+    authenticatedRef.current = authenticated;
+  }, [authenticated]);
+
+  useEffect(() => {
     if (!authenticated) {
       return;
     }
@@ -134,17 +156,23 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
         void checkForAppUpdate();
+        refreshVisibleMessages();
       }
     }
 
-    window.addEventListener("focus", checkForAppUpdate);
+    function handleFocus() {
+      void checkForAppUpdate();
+      refreshVisibleMessages();
+    }
+
+    window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      window.removeEventListener("focus", checkForAppUpdate);
+      window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [checkForAppUpdate]);
+  }, [checkForAppUpdate, refreshVisibleMessages]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) {
@@ -164,6 +192,22 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
 
     return () => window.removeEventListener("load", registerServiceWorker);
   }, []);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) {
+      return;
+    }
+
+    function handleServiceWorkerMessage(event: MessageEvent) {
+      if (event.data?.type === "bbcafe:notification-click") {
+        refreshVisibleMessages();
+      }
+    }
+
+    navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
+
+    return () => navigator.serviceWorker.removeEventListener("message", handleServiceWorkerMessage);
+  }, [refreshVisibleMessages]);
 
   useEffect(() => {
     if (!authenticated) {
