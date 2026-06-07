@@ -42,6 +42,7 @@ describe("generateDailyGreetingMessage", () => {
     const requestInit = fetchMock.mock.calls[0]?.[1];
     const requestBody = JSON.parse(String(requestInit?.body));
     expect(requestBody.generationConfig.maxOutputTokens).toBe(1000);
+    expect(requestBody.generationConfig.thinkingConfig).toBeUndefined();
     expect(requestBody.contents[0].parts[0].text).toContain("本文の冒頭は必ず「お早うございます。」");
     expect(requestBody.contents[0].parts[0].text).toContain("2〜4文程度で完結");
     expect(requestBody.contents[0].parts[0].text).toContain("全体の文章量は、300文字〜500文字程度で簡潔にまとめる");
@@ -69,7 +70,29 @@ describe("generateDailyGreetingMessage", () => {
     expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIから不完全なメッセージが返されました。");
   });
 
-  it("rejects a Gemini response that stopped before the message was complete with a display summary", async () => {
+  it("uses complete Gemini text even when the API reports MAX_TOKENS", async () => {
+    process.env.GEMINI_API_KEY = "test-api-key";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。" }],
+            },
+            finishReason: "MAX_TOKENS",
+          },
+        ],
+      }),
+    );
+
+    const result = await generateDailyGreetingMessage({
+      today: new Date("2026-06-07T00:00:00Z"),
+    });
+
+    expect(result.text).toBe("お早うございます。\n今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
+  });
+
+  it("rejects an incomplete MAX_TOKENS response with a display summary", async () => {
     process.env.GEMINI_API_KEY = "test-api-key";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
@@ -86,10 +109,29 @@ describe("generateDailyGreetingMessage", () => {
 
     const error = await captureGenerationError();
 
-    expect(error).toEqual(
-      expect.objectContaining({ message: "Gemini API stopped before completing the message: MAX_TOKENS." }),
+    expect(error).toEqual(expect.objectContaining({ message: "Gemini API returned an incomplete message." }));
+    expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIから不完全なメッセージが返されました。");
+  });
+
+  it("rejects a Gemini response that stopped for a non-token reason with a display summary", async () => {
+    process.env.GEMINI_API_KEY = "test-api-key";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。" }],
+            },
+            finishReason: "SAFETY",
+          },
+        ],
+      }),
     );
-    expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIが途中で停止しました: MAX_TOKENS");
+
+    const error = await captureGenerationError();
+
+    expect(error).toEqual(expect.objectContaining({ message: "Gemini API stopped before completing the message: SAFETY." }));
+    expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIが途中で停止しました: SAFETY");
   });
 
   it("rejects when Gemini is not configured with a display summary", async () => {

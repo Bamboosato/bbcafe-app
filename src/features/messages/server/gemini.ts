@@ -100,13 +100,6 @@ export async function generateDailyGreetingMessage({
     .join("")
     .trim();
 
-  if (finishReason && finishReason !== "STOP") {
-    throw new GeminiMessageGenerationError(
-      `Gemini API stopped before completing the message: ${finishReason}.`,
-      `Gemini APIが途中で停止しました: ${finishReason}`,
-    );
-  }
-
   if (!generatedText) {
     throw new GeminiMessageGenerationError(
       "Gemini API did not return message text.",
@@ -115,6 +108,13 @@ export async function generateDailyGreetingMessage({
   }
 
   const text = formatDailyGreetingForSend(generatedText, today);
+
+  if (finishReason && finishReason !== "STOP" && finishReason !== "MAX_TOKENS") {
+    throw new GeminiMessageGenerationError(
+      `Gemini API stopped before completing the message: ${finishReason}.`,
+      `Gemini APIが途中で停止しました: ${finishReason}`,
+    );
+  }
 
   if (looksIncompleteDailyGreeting(text)) {
     throw new GeminiMessageGenerationError(
