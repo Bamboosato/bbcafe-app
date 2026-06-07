@@ -41,9 +41,10 @@ describe("generateDailyGreetingMessage", () => {
 
     const requestInit = fetchMock.mock.calls[0]?.[1];
     const requestBody = JSON.parse(String(requestInit?.body));
-    expect(requestBody.generationConfig.maxOutputTokens).toBe(1024);
+    expect(requestBody.generationConfig.maxOutputTokens).toBe(1000);
     expect(requestBody.contents[0].parts[0].text).toContain("本文の冒頭は必ず「お早うございます。」");
     expect(requestBody.contents[0].parts[0].text).toContain("2〜4文程度で完結");
+    expect(requestBody.contents[0].parts[0].text).toContain("全体の文章量は、300文字〜500文字程度で簡潔にまとめる");
     expect(result.text).toBe("お早うございます。\n今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
   });
 
