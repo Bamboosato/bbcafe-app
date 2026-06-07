@@ -41,6 +41,17 @@ type PushPublicKeyResponse = {
   publicKey: string;
 };
 
+type GenerateMessageResponse = {
+  location: string;
+  message: string;
+};
+
+type SendGeneratedMessageResponse = {
+  failedCount: number;
+  sentCount: number;
+  totalCount: number;
+};
+
 export default function ViewerApp({ appVersion }: { appVersion: string }) {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
@@ -50,8 +61,14 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   const [users, setUsers] = useState<UserInfoView[]>([]);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [generatedMessage, setGeneratedMessage] = useState("");
+  const [generatedMessageLocation, setGeneratedMessageLocation] = useState("");
+  const [generatedMessageStatus, setGeneratedMessageStatus] = useState("");
+  const [generatingMessage, setGeneratingMessage] = useState(false);
+  const [sendingGeneratedMessage, setSendingGeneratedMessage] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<"messages" | "users">("messages");
+  const [currentView, setCurrentView] = useState<"generated-message" | "messages" | "users">("messages");
   const [pushCapabilityChecked, setPushCapabilityChecked] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushStatus, setPushStatus] = useState("");
@@ -68,6 +85,10 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
 
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
+  const selectedUsers = useMemo(
+    () => users.filter((user) => selectedUserIds.includes(user.userId)),
+    [selectedUserIds, users],
+  );
   const messageListStatus = loadingMessages ? "更新中です。" : status || "60秒ごとに自動更新します。";
 
   const checkForAppUpdate = useCallback(async () => {
@@ -144,6 +165,16 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     setAccountMenuOpen(false);
     setSelectedMessage(null);
     void loadUsers();
+  }
+
+  function showGeneratedMessageView() {
+    setCurrentView("generated-message");
+    setAccountMenuOpen(false);
+    setSelectedMessage(null);
+
+    if (users.length === 0) {
+      void loadUsers();
+    }
   }
 
   function showMessageView() {
@@ -495,6 +526,10 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     setMessageFilter("all");
     setMessages([]);
     setUsers([]);
+    setSelectedUserIds([]);
+    setGeneratedMessage("");
+    setGeneratedMessageLocation("");
+    setGeneratedMessageStatus("");
     setPushCapabilityChecked(false);
     setPushEnabled(false);
     setPushStatus("");
@@ -506,6 +541,73 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   function handleFilterChange(nextFilter: MessageFilter) {
     setMessageFilter(nextFilter);
     setSelectedMessage((current) => (current && !matchesMessageFilter(current, nextFilter) ? null : current));
+  }
+
+  function handleUserSelectionChange(userId: string, selected: boolean) {
+    setSelectedUserIds((current) => {
+      if (selected) {
+        return current.includes(userId) ? current : [...current, userId];
+      }
+
+      return current.filter((currentUserId) => currentUserId !== userId);
+    });
+  }
+
+  async function handleGenerateMessage() {
+    setError("");
+    setGeneratedMessageStatus("");
+    setGeneratingMessage(true);
+
+    try {
+      const result = await fetchJson<GenerateMessageResponse>("/api/message-assistant/generate", {
+        method: "POST",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      setGeneratedMessage(result.data?.message ?? "");
+      setGeneratedMessageLocation(result.data?.location ?? "");
+      setGeneratedMessageStatus("メッセージを作成しました。");
+    } finally {
+      setGeneratingMessage(false);
+    }
+  }
+
+  async function handleSendGeneratedMessage() {
+    setError("");
+    setGeneratedMessageStatus("");
+    setSendingGeneratedMessage(true);
+
+    try {
+      const result = await fetchJson<SendGeneratedMessageResponse>("/api/message-assistant/send", {
+        body: JSON.stringify({
+          message: generatedMessage,
+          userIds: selectedUserIds,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      const sentCount = result.data?.sentCount ?? 0;
+      const failedCount = result.data?.failedCount ?? 0;
+      setGeneratedMessageStatus(
+        failedCount > 0
+          ? `${sentCount}件送信しました。${failedCount}件は送信できませんでした。`
+          : `${sentCount}件のユーザに送信しました。`,
+      );
+    } finally {
+      setSendingGeneratedMessage(false);
+    }
   }
 
   async function handleSelect(messageId: string) {
@@ -620,6 +722,9 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
                 <button className="secondary account-user-info" onClick={showUserInfoView} role="menuitem" type="button">
                   ユーザ情報
                 </button>
+                <button className="secondary account-message" onClick={showGeneratedMessageView} role="menuitem" type="button">
+                  メッセージ
+                </button>
                 <button className="secondary account-logout" onClick={() => void handleLogout()} role="menuitem" type="button">
                   ログアウト
                 </button>
@@ -647,15 +752,36 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
             totalCount={messages.length}
           />
         </section>
-      ) : (
+      ) : null}
+
+      {currentView === "users" ? (
         <UserInfoScreen
           loading={loadingUsers}
           onBack={showMessageView}
           onRefresh={() => void loadUsers()}
+          onSelectionChange={handleUserSelectionChange}
+          selectedUserIds={selectedUserIds}
           statusText={status || "取得済みのユーザ情報を表示します。"}
           users={users}
         />
-      )}
+      ) : null}
+
+      {currentView === "generated-message" ? (
+        <GeneratedMessageScreen
+          generating={generatingMessage}
+          loadingUsers={loadingUsers}
+          message={generatedMessage}
+          location={generatedMessageLocation}
+          onBack={showMessageView}
+          onGenerate={() => void handleGenerateMessage()}
+          onMessageChange={setGeneratedMessage}
+          onOpenUsers={showUserInfoView}
+          onSend={() => void handleSendGeneratedMessage()}
+          selectedUsers={selectedUsers}
+          sending={sendingGeneratedMessage}
+          statusText={generatedMessageStatus}
+        />
+      ) : null}
       <MessageDetailModal message={selectedMessage} onClose={closeMessageModal} />
     </main>
   );
@@ -665,12 +791,16 @@ function UserInfoScreen({
   loading,
   onBack,
   onRefresh,
+  onSelectionChange,
+  selectedUserIds,
   statusText,
   users,
 }: {
   loading: boolean;
   onBack: () => void;
   onRefresh: () => void;
+  onSelectionChange: (userId: string, selected: boolean) => void;
+  selectedUserIds: string[];
   statusText: string;
   users: UserInfoView[];
 }) {
@@ -696,7 +826,11 @@ function UserInfoScreen({
           {users.map((user) => (
             <article className="user-info-card" key={user.userId} role="listitem">
               <label className="user-info-checkbox" aria-label={`${user.userName}を選択`}>
-                <input type="checkbox" />
+                <input
+                  checked={selectedUserIds.includes(user.userId)}
+                  onChange={(event) => onSelectionChange(user.userId, event.target.checked)}
+                  type="checkbox"
+                />
               </label>
               <dl className="user-info-details">
                 <div>
@@ -720,6 +854,91 @@ function UserInfoScreen({
           {loading ? "ユーザ情報を読み込んでいます。" : "表示できるユーザ情報はありません。"}
         </div>
       )}
+    </section>
+  );
+}
+
+
+function GeneratedMessageScreen({
+  generating,
+  loadingUsers,
+  location,
+  message,
+  onBack,
+  onGenerate,
+  onMessageChange,
+  onOpenUsers,
+  onSend,
+  selectedUsers,
+  sending,
+  statusText,
+}: {
+  generating: boolean;
+  loadingUsers: boolean;
+  location: string;
+  message: string;
+  onBack: () => void;
+  onGenerate: () => void;
+  onMessageChange: (message: string) => void;
+  onOpenUsers: () => void;
+  onSend: () => void;
+  selectedUsers: UserInfoView[];
+  sending: boolean;
+  statusText: string;
+}) {
+  const selectedUserNames = selectedUsers.map((user) => user.userName).join("、");
+
+  return (
+    <section className="generated-message-screen">
+      <div className="generated-message-header">
+        <div>
+          <h2>メッセージ</h2>
+          <p className="status-text">
+            作成ボタンで今日の一言メッセージを自動生成し、選択中のユーザへ送信します。
+          </p>
+        </div>
+        <div className="generated-message-actions">
+          <button className="secondary" onClick={onBack} type="button">
+            メッセージへ戻る
+          </button>
+          <button className="secondary" disabled={loadingUsers} onClick={onOpenUsers} type="button">
+            {loadingUsers ? "ユーザ情報を読込中..." : "ユーザ情報を選択"}
+          </button>
+        </div>
+      </div>
+
+      <div className="panel generated-message-panel">
+        <div className="generated-message-toolbar">
+          <button disabled={generating || sending} onClick={onGenerate} type="button">
+            {generating ? "作成中..." : "作成"}
+          </button>
+          <button
+            disabled={!message.trim() || selectedUsers.length === 0 || generating || sending}
+            onClick={onSend}
+            type="button"
+          >
+            {sending ? "送信中..." : "送信"}
+          </button>
+        </div>
+
+        <div className="generated-message-targets">
+          <span>送信先</span>
+          <strong>{selectedUsers.length ? `${selectedUsers.length}名：${selectedUserNames}` : "未選択"}</strong>
+        </div>
+
+        {location ? <p className="status-text">対象地域: {location}</p> : null}
+        {statusText ? <p aria-live="polite" className="status-text">{statusText}</p> : null}
+
+        <label>
+          メッセージ本文
+          <textarea
+            onChange={(event) => onMessageChange(event.target.value)}
+            placeholder="作成ボタンを押すと、ここにメッセージが表示されます。"
+            rows={8}
+            value={message}
+          />
+        </label>
+      </div>
     </section>
   );
 }
