@@ -1,4 +1,8 @@
-import { generateDailyGreetingMessage, summarizeDailyGreetingGenerationError } from "@/features/messages/server/gemini";
+import {
+  generateDailyGreetingMessage,
+  getDailyGreetingGenerationPartialResult,
+  summarizeDailyGreetingGenerationError,
+} from "@/features/messages/server/gemini";
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireViewerSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
@@ -25,6 +29,19 @@ export async function POST(request: Request) {
       requestId,
       summary,
     });
+
+    const partialResult = getDailyGreetingGenerationPartialResult(error);
+
+    if (partialResult) {
+      return jsonData(
+        {
+          location: partialResult.location,
+          message: partialResult.text,
+          warning: `不完全なメッセージの可能性があります。内容を確認し、必要に応じて編集してください。（エラー番号: ${requestId} / 概要: ${summary}）`,
+        },
+        requestId,
+      );
+    }
 
     return jsonError(
       503,
