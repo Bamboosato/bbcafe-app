@@ -3,6 +3,8 @@ import { fetchWithRateLimitRetry } from "./rateLimitRetry";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_MESSAGE_LOCATION = "日本";
 const DAILY_GREETING_MAX_OUTPUT_TOKENS = 1024;
+const DAILY_GREETING_TIME_ZONE = "Asia/Tokyo";
+const TIME_OF_DAY_GREETINGS = ["お早うございます。", "こんにちは。", "こんばんは。"] as const;
 
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
@@ -35,7 +37,8 @@ export async function generateDailyGreetingMessage({
   }
 
   const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
-  const prompt = buildDailyGreetingPrompt({ location, today });
+  const timeOfDayGreeting = getTimeOfDayGreeting(today);
+  const prompt = buildDailyGreetingPrompt({ location, timeOfDayGreeting, today });
   const response = await fetchWithRateLimitRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
@@ -67,7 +70,7 @@ export async function generateDailyGreetingMessage({
 
   const candidate = payload.candidates?.[0];
   const finishReason = candidate?.finishReason;
-  const text = candidate?.content?.parts
+  const generatedText = candidate?.content?.parts
     ?.map((part) => part.text ?? "")
     .join("")
     .trim();
@@ -76,9 +79,11 @@ export async function generateDailyGreetingMessage({
     throw new Error(`Gemini API stopped before completing the message: ${finishReason}.`);
   }
 
-  if (!text) {
+  if (!generatedText) {
     throw new Error("Gemini API did not return message text.");
   }
+
+  const text = formatDailyGreetingForSend(generatedText, today);
 
   if (looksIncompleteDailyGreeting(text)) {
     throw new Error("Gemini API returned an incomplete message.");
@@ -90,10 +95,18 @@ export async function generateDailyGreetingMessage({
   };
 }
 
-function buildDailyGreetingPrompt({ location, today }: { location: string; today: Date }) {
+function buildDailyGreetingPrompt({
+  location,
+  timeOfDayGreeting,
+  today,
+}: {
+  location: string;
+  timeOfDayGreeting: string;
+  today: Date;
+}) {
   const todayStr = new Intl.DateTimeFormat("ja-JP", {
     dateStyle: "long",
-    timeZone: "Asia/Tokyo",
+    timeZone: DAILY_GREETING_TIME_ZONE,
   }).format(today);
 
   return `
@@ -103,6 +116,7 @@ function buildDailyGreetingPrompt({ location, today }: { location: string; today
 その情報をもとに、高齢者の方に向けた「今日の一言メッセージ（挨拶文）」を1つ作成してください。
 
 【条件】
+・本文の冒頭は必ず「${timeOfDayGreeting}」にする
 ・2〜4文程度で完結させる
 ・「今日の季節感や暦」の話題から会話を始める
 ・専門用語は使わず、語りかけるような優しい口調にする
@@ -116,4 +130,50 @@ function looksIncompleteDailyGreeting(text: string) {
   const trimmedText = text.trim();
 
   return trimmedText.length < 30 || /[、,，]$/.test(trimmedText) || !/[。.!?！？]$/.test(trimmedText);
+}
+
+export function formatDailyGreetingForSend(text: string, sendTime = new Date()) {
+  const timeOfDayGreeting = getTimeOfDayGreeting(sendTime);
+  const trimmedText = text.trim();
+  const greetingPattern = new RegExp(`^(${TIME_OF_DAY_GREETINGS.join("|")})\\s*`);
+  const textWithoutExistingGreeting = trimmedText.replace(greetingPattern, "").trimStart();
+
+  if (!textWithoutExistingGreeting) {
+    return timeOfDayGreeting;
+  }
+
+  return `${timeOfDayGreeting}\n${textWithoutExistingGreeting}`;
+}
+
+function getTimeOfDayGreeting(date: Date) {
+  const hour = getHourInTimeZone(date, DAILY_GREETING_TIME_ZONE);
+
+  if (hour >= 5 && hour < 11) {
+    return "お早うございます。";
+  }
+
+  if (hour >= 11 && hour < 18) {
+    return "こんにちは。";
+  }
+
+  return "こんばんは。";
+}
+
+function getHourInTimeZone(date: Date, timeZone: string) {
+  const hourPart = new Intl.DateTimeFormat("ja-JP", {
+    hour: "numeric",
+    hourCycle: "h23",
+    hour12: false,
+    timeZone,
+  })
+    .formatToParts(date)
+    .find((part) => part.type === "hour");
+
+  const hour = Number(hourPart?.value);
+
+  if (!Number.isInteger(hour)) {
+    throw new Error(`Could not determine hour in time zone: ${timeZone}`);
+  }
+
+  return hour;
 }

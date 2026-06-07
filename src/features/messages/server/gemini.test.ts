@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { generateDailyGreetingMessage } from "./gemini";
+import { formatDailyGreetingForSend, generateDailyGreetingMessage } from "./gemini";
 
 describe("generateDailyGreetingMessage", () => {
   afterEach(() => {
@@ -32,8 +32,9 @@ describe("generateDailyGreetingMessage", () => {
     const requestInit = fetchMock.mock.calls[0]?.[1];
     const requestBody = JSON.parse(String(requestInit?.body));
     expect(requestBody.generationConfig.maxOutputTokens).toBe(1024);
+    expect(requestBody.contents[0].parts[0].text).toContain("本文の冒頭は必ず「お早うございます。」");
     expect(requestBody.contents[0].parts[0].text).toContain("2〜4文程度で完結");
-    expect(result.text).toBe("今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
+    expect(result.text).toBe("お早うございます。\n今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
   });
 
   it("rejects an obviously incomplete Gemini response", async () => {
@@ -72,5 +73,26 @@ describe("generateDailyGreetingMessage", () => {
     await expect(generateDailyGreetingMessage()).rejects.toThrow(
       "Gemini API stopped before completing the message: MAX_TOKENS.",
     );
+  });
+});
+
+describe("formatDailyGreetingForSend", () => {
+  it.each([
+    ["morning", "2026-06-06T21:00:00Z", "お早うございます。"],
+    ["afternoon", "2026-06-07T03:00:00Z", "こんにちは。"],
+    ["evening", "2026-06-07T11:00:00Z", "こんばんは。"],
+  ])("adds the %s greeting for the Japan send time", (_period, sendTime, greeting) => {
+    expect(formatDailyGreetingForSend("今日は穏やかな季節の一日です。", new Date(sendTime))).toBe(
+      `${greeting}\n今日は穏やかな季節の一日です。`,
+    );
+  });
+
+  it("replaces an existing time-of-day greeting with the greeting for the actual send time", () => {
+    expect(
+      formatDailyGreetingForSend(
+        "こんにちは。\n今日は穏やかな季節の一日です。",
+        new Date("2026-06-07T11:00:00Z"),
+      ),
+    ).toBe("こんばんは。\n今日は穏やかな季節の一日です。");
   });
 });
