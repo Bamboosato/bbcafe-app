@@ -653,3 +653,83 @@ label {
     flex: 1 1 140px;
   }
 }
+
+textarea {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  line-height: 1.7;
+  min-height: 180px;
+  padding: 10px 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.account-message {
+  width: 100%;
+}
+
+.generated-message-screen {
+  display: grid;
+  gap: 14px;
+}
+
+.generated-message-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.generated-message-header h2 {
+  font-size: 20px;
+  line-height: 1.3;
+  margin: 0 0 4px;
+}
+
+.generated-message-actions,
+.generated-message-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.generated-message-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.generated-message-targets {
+  background: var(--surface);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.generated-message-targets span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.generated-message-targets strong {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .generated-message-header {
+    display: grid;
+  }
+
+  .generated-message-actions,
+  .generated-message-toolbar {
+    justify-content: stretch;
+  }
+
+  .generated-message-actions button,
+  .generated-message-toolbar button {
+    flex: 1 1 140px;
+  }
+}
