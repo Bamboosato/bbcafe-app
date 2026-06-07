@@ -75,6 +75,10 @@ npm run test
 npm run build
 ```
 
+## Preview環境での確認
+
+Preview Deploymentで確認するためのEnvironment Variablesと確認項目は、[Preview環境 確認手順](docs/preview-verification.md)を参照してください。
+
 ## 設計書
 
 [LINE Message Viewer 詳細設計](docs/line-message-viewer-detail-design.md)
