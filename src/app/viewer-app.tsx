@@ -44,6 +44,7 @@ type PushPublicKeyResponse = {
 type GenerateMessageResponse = {
   location: string;
   message: string;
+  warning?: string;
 };
 
 type SendGeneratedMessageResponse = {
@@ -570,7 +571,7 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
 
       setGeneratedMessage(result.data?.message ?? "");
       setGeneratedMessageLocation(result.data?.location ?? "");
-      setGeneratedMessageStatus("メッセージを作成しました。");
+      setGeneratedMessageStatus(result.data?.warning ?? "メッセージを作成しました。");
     } finally {
       setGeneratingMessage(false);
     }

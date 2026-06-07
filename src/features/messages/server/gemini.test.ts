@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formatDailyGreetingForSend, generateDailyGreetingMessage, summarizeDailyGreetingGenerationError } from "./gemini";
+import {
+  formatDailyGreetingForSend,
+  generateDailyGreetingMessage,
+  getDailyGreetingGenerationPartialResult,
+  summarizeDailyGreetingGenerationError,
+} from "./gemini";
 
 async function captureGenerationError() {
   try {
@@ -68,6 +73,10 @@ describe("generateDailyGreetingMessage", () => {
 
     expect(error).toEqual(expect.objectContaining({ message: "Gemini API returned an incomplete message." }));
     expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIから不完全なメッセージが返されました。");
+    expect(getDailyGreetingGenerationPartialResult(error)).toEqual({
+      location: "日本",
+      text: expect.stringMatching(/^(お早うございます。|こんにちは。|こんばんは。)\n2026年6月7日、$/),
+    });
   });
 
   it("uses complete Gemini text even when the API reports MAX_TOKENS", async () => {
@@ -111,6 +120,10 @@ describe("generateDailyGreetingMessage", () => {
 
     expect(error).toEqual(expect.objectContaining({ message: "Gemini API returned an incomplete message." }));
     expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIから不完全なメッセージが返されました。");
+    expect(getDailyGreetingGenerationPartialResult(error)).toEqual({
+      location: "日本",
+      text: expect.stringMatching(/^(お早うございます。|こんにちは。|こんばんは。)\n2026年6月7日、$/),
+    });
   });
 
   it("rejects a Gemini response that stopped for a non-token reason with a display summary", async () => {

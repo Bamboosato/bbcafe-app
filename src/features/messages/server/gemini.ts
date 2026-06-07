@@ -33,6 +33,7 @@ class GeminiMessageGenerationError extends Error {
   constructor(
     message: string,
     readonly summary: string,
+    readonly partialResult?: { location: string; text: string },
   ) {
     super(message);
     this.name = "GeminiMessageGenerationError";
@@ -120,6 +121,7 @@ export async function generateDailyGreetingMessage({
     throw new GeminiMessageGenerationError(
       "Gemini API returned an incomplete message.",
       "Gemini APIから不完全なメッセージが返されました。",
+      { location, text },
     );
   }
 
@@ -127,6 +129,14 @@ export async function generateDailyGreetingMessage({
     location,
     text,
   };
+}
+
+export function getDailyGreetingGenerationPartialResult(error: unknown) {
+  if (error instanceof GeminiMessageGenerationError) {
+    return error.partialResult;
+  }
+
+  return undefined;
 }
 
 export function summarizeDailyGreetingGenerationError(error: unknown) {
