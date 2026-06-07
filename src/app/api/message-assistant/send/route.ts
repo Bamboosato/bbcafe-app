@@ -1,4 +1,5 @@
 import { getLineCredentials } from "@/features/messages/server/credentials";
+import { formatDailyGreetingForSend } from "@/features/messages/server/gemini";
 import { listUserInfos } from "@/features/messages/server/messages";
 import { sendLineTextMessages } from "@/features/messages/server/outboundLine";
 import { jsonData, jsonError } from "@/lib/server/api-response";
@@ -52,9 +53,10 @@ export async function POST(request: Request) {
     }
 
     const credentials = await getLineCredentials(auth.payload.lineAccountId);
+    const text = formatDailyGreetingForSend(message);
     const results = await sendLineTextMessages({
       channelAccessToken: credentials.channelAccessToken,
-      text: message,
+      text,
       userIds: validUserIds,
     });
     const failed = results.filter((result) => !result.ok);
