@@ -1,3 +1,5 @@
+import { fetchWithRateLimitRetry } from "./rateLimitRetry";
+
 export type LinePushResult = {
   ok: boolean;
   status: number;
@@ -16,7 +18,7 @@ export async function sendLineTextMessages({
   const results: LinePushResult[] = [];
 
   for (const userId of userIds) {
-    const response = await fetch("https://api.line.me/v2/bot/message/push", {
+    const response = await fetchWithRateLimitRetry("https://api.line.me/v2/bot/message/push", {
       body: JSON.stringify({
         messages: [
           {

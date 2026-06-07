@@ -1,3 +1,5 @@
+import { fetchWithRateLimitRetry } from "./rateLimitRetry";
+
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_MESSAGE_LOCATION = "日本";
 
@@ -32,7 +34,7 @@ export async function generateDailyGreetingMessage({
 
   const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
   const prompt = buildDailyGreetingPrompt({ location, today });
-  const response = await fetch(
+  const response = await fetchWithRateLimitRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
       body: JSON.stringify({
