@@ -10,6 +10,13 @@ export type LineAccountView = {
   viewerSharedId: string;
 };
 
+export type UserInfoView = {
+  fetchedAt: string;
+  lineAccountId: string;
+  userId: string;
+  userName: string;
+};
+
 export type MessageView = {
   expiresAt: string;
   lineAccountId: string;
