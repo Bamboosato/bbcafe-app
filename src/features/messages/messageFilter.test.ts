@@ -13,6 +13,8 @@ function createMessage(messageId: string, sourceType: MessageView["sourceType"])
     sourceGroupId: sourceType === "group" ? "group-1" : null,
     sourceGroupName: sourceType === "group" ? "group name" : null,
     sourceType,
+    sourceUserDisplayName: "sender",
+    sourceUserId: "user-1",
     text: "message text",
   };
 }

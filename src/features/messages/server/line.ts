@@ -11,6 +11,12 @@ type LineWebhookPayload = {
   events?: LineWebhookEvent[];
 };
 
+type SourceProfileContext = {
+  groupId: null | string;
+  sourceType: "group" | "room" | "user";
+  sourceUserId: null | string;
+};
+
 type LineWebhookEvent = {
   mode?: string;
   source?: {
@@ -90,11 +96,12 @@ async function processTextMessageEvent(
   }
 
   const sourceUserId = event.source?.userId ?? null;
-  const groupId = event.source?.groupId ?? event.source?.roomId ?? null;
-  const sourceType = event.source?.type === "user" ? "user" : "group";
-  const [senderDisplayName, sourceGroupName] = await Promise.all([
-    resolveSenderDisplayName(channelAccessToken, sourceType, sourceUserId, groupId),
-    sourceType === "group" && groupId ? resolveGroupName(channelAccessToken, groupId) : Promise.resolve(null),
+  const lineSourceType = normalizeLineSourceType(event.source?.type);
+  const groupId = lineSourceType === "group" ? event.source?.groupId ?? null : event.source?.roomId ?? null;
+  const sourceType = lineSourceType === "user" ? "user" : "group";
+  const [sourceUserDisplayName, sourceGroupName] = await Promise.all([
+    resolveSenderDisplayName(channelAccessToken, { groupId, sourceType: lineSourceType, sourceUserId }),
+    lineSourceType === "group" && groupId ? resolveGroupName(channelAccessToken, groupId) : Promise.resolve(null),
   ]);
   const sentAt = typeof event.timestamp === "number" ? new Date(event.timestamp) : new Date();
   const account = await getLineAccount(lineAccountId);
@@ -105,11 +112,12 @@ async function processTextMessageEvent(
     lineAccountId,
     lineMessageId,
     receivedAt: new Date(),
-    senderDisplayName,
+    senderDisplayName: sourceUserDisplayName,
     sentAt,
     sourceGroupId: sourceType === "group" ? groupId : null,
     sourceGroupName: sourceType === "group" ? sourceGroupName ?? FALLBACK_GROUP_NAME : null,
     sourceType,
+    sourceUserDisplayName,
     sourceUserId,
     text,
     webhookEventId,
@@ -130,20 +138,33 @@ async function processTextMessageEvent(
   return result.created;
 }
 
-async function resolveSenderDisplayName(
-  channelAccessToken: string,
-  sourceType: "group" | "user",
-  sourceUserId: null | string,
-  groupId: null | string,
-) {
+function normalizeLineSourceType(sourceType: NonNullable<LineWebhookEvent["source"]>["type"]) {
+  return sourceType === "group" || sourceType === "room" || sourceType === "user" ? sourceType : "user";
+}
+
+export function getSenderProfilePath({ groupId, sourceType, sourceUserId }: SourceProfileContext) {
   if (!sourceUserId) {
+    return null;
+  }
+
+  if (sourceType === "group" && groupId) {
+    return `/v2/bot/group/${encodeURIComponent(groupId)}/member/${encodeURIComponent(sourceUserId)}`;
+  }
+
+  if (sourceType === "room" && groupId) {
+    return `/v2/bot/room/${encodeURIComponent(groupId)}/member/${encodeURIComponent(sourceUserId)}`;
+  }
+
+  return `/v2/bot/profile/${encodeURIComponent(sourceUserId)}`;
+}
+
+async function resolveSenderDisplayName(channelAccessToken: string, context: SourceProfileContext) {
+  const path = getSenderProfilePath(context);
+
+  if (!path) {
     return FALLBACK_USER_NAME;
   }
 
-  const path =
-    sourceType === "group" && groupId
-      ? `/v2/bot/group/${encodeURIComponent(groupId)}/member/${encodeURIComponent(sourceUserId)}`
-      : `/v2/bot/profile/${encodeURIComponent(sourceUserId)}`;
   const data = await fetchLineJson<{ displayName?: string }>(channelAccessToken, path);
 
   return data?.displayName?.trim() || FALLBACK_USER_NAME;
