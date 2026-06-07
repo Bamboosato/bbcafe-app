@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formatDailyGreetingForSend, generateDailyGreetingMessage } from "./gemini";
+import { formatDailyGreetingForSend, generateDailyGreetingMessage, summarizeDailyGreetingGenerationError } from "./gemini";
+
+async function captureGenerationError() {
+  try {
+    await generateDailyGreetingMessage();
+  } catch (error) {
+    return error;
+  }
+
+  throw new Error("Expected generateDailyGreetingMessage to throw.");
+}
 
 describe("generateDailyGreetingMessage", () => {
   afterEach(() => {
@@ -37,7 +47,7 @@ describe("generateDailyGreetingMessage", () => {
     expect(result.text).toBe("お早うございます。\n今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
   });
 
-  it("rejects an obviously incomplete Gemini response", async () => {
+  it("rejects an obviously incomplete Gemini response with a display summary", async () => {
     process.env.GEMINI_API_KEY = "test-api-key";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
@@ -52,10 +62,13 @@ describe("generateDailyGreetingMessage", () => {
       }),
     );
 
-    await expect(generateDailyGreetingMessage()).rejects.toThrow("Gemini API returned an incomplete message.");
+    const error = await captureGenerationError();
+
+    expect(error).toEqual(expect.objectContaining({ message: "Gemini API returned an incomplete message." }));
+    expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIから不完全なメッセージが返されました。");
   });
 
-  it("rejects a Gemini response that stopped before the message was complete", async () => {
+  it("rejects a Gemini response that stopped before the message was complete with a display summary", async () => {
     process.env.GEMINI_API_KEY = "test-api-key";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
@@ -70,9 +83,37 @@ describe("generateDailyGreetingMessage", () => {
       }),
     );
 
-    await expect(generateDailyGreetingMessage()).rejects.toThrow(
-      "Gemini API stopped before completing the message: MAX_TOKENS.",
+    const error = await captureGenerationError();
+
+    expect(error).toEqual(
+      expect.objectContaining({ message: "Gemini API stopped before completing the message: MAX_TOKENS." }),
     );
+    expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIが途中で停止しました: MAX_TOKENS");
+  });
+
+  it("rejects when Gemini is not configured with a display summary", async () => {
+    const error = await captureGenerationError();
+
+    expect(error).toEqual(expect.objectContaining({ message: "Missing required environment variable: GEMINI_API_KEY" }));
+    expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIキーが設定されていません。");
+  });
+
+  it("rejects Gemini API HTTP errors with status and summary", async () => {
+    process.env.GEMINI_API_KEY = "test-api-key";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            message: "API key not valid.",
+          },
+        },
+        { status: 400 },
+      ),
+    );
+
+    const error = await captureGenerationError();
+
+    expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIエラー 400: API key not valid.");
   });
 });
 
