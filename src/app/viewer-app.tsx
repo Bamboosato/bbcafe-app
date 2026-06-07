@@ -7,7 +7,7 @@ import {
   MESSAGE_FILTER_OPTIONS,
   type MessageFilter,
 } from "@/features/messages/messageFilter";
-import type { MessageView } from "@/features/messages/types";
+import type { MessageView, UserInfoView } from "@/features/messages/types";
 
 type ApiEnvelope<T> = {
   data?: T;
@@ -23,6 +23,10 @@ type SessionResponse = {
 
 type MessagesResponse = {
   messages: MessageView[];
+};
+
+type UsersResponse = {
+  users: UserInfoView[];
 };
 
 type MessageResponse = {
@@ -43,20 +47,24 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   const [sharedId, setSharedId] = useState("bbcafe");
   const [password, setPassword] = useState("");
   const [messages, setMessages] = useState<MessageView[]>([]);
+  const [users, setUsers] = useState<UserInfoView[]>([]);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [currentView, setCurrentView] = useState<"messages" | "users">("messages");
   const [pushCapabilityChecked, setPushCapabilityChecked] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushStatus, setPushStatus] = useState("");
   const [pushSupported, setPushSupported] = useState(false);
   const [pushUpdating, setPushUpdating] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const authenticatedRef = useRef(false);
   const loadingMessagesRef = useRef(false);
+  const loadingUsersRef = useRef(false);
 
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
@@ -103,6 +111,44 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
       setLoadingMessages(false);
     }
   }, []);
+
+  const loadUsers = useCallback(async () => {
+    if (loadingUsersRef.current) {
+      return;
+    }
+
+    loadingUsersRef.current = true;
+    setLoadingUsers(true);
+    setError("");
+
+    try {
+      const result = await fetchJson<UsersResponse>("/api/users", {
+        cache: "no-store",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      setUsers(result.data?.users ?? []);
+      setStatus(`ユーザ情報の最終更新: ${formatTime(new Date().toISOString())}`);
+    } finally {
+      loadingUsersRef.current = false;
+      setLoadingUsers(false);
+    }
+  }, []);
+
+  function showUserInfoView() {
+    setCurrentView("users");
+    setAccountMenuOpen(false);
+    setSelectedMessage(null);
+    void loadUsers();
+  }
+
+  function showMessageView() {
+    setCurrentView("messages");
+  }
 
   const refreshVisibleMessages = useCallback(() => {
     if (authenticatedRef.current) {
@@ -445,8 +491,10 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     await fetchJson("/api/viewer/logout", { method: "POST" });
     setAuthenticated(false);
     setAccountMenuOpen(false);
+    setCurrentView("messages");
     setMessageFilter("all");
     setMessages([]);
+    setUsers([]);
     setPushCapabilityChecked(false);
     setPushEnabled(false);
     setPushStatus("");
@@ -569,6 +617,9 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
                     </p>
                   ) : null}
                 </div>
+                <button className="secondary account-user-info" onClick={showUserInfoView} role="menuitem" type="button">
+                  ユーザ情報
+                </button>
                 <button className="secondary account-logout" onClick={() => void handleLogout()} role="menuitem" type="button">
                   ログアウト
                 </button>
@@ -584,19 +635,92 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
         </section>
       ) : null}
 
-      <section className="message-layout">
-        <MessageList
-          filter={messageFilter}
-          messages={filteredMessages}
-          onFilterChange={handleFilterChange}
-          onSelect={handleSelect}
-          selectedId={selectedId}
-          statusText={messageListStatus}
-          totalCount={messages.length}
+      {currentView === "messages" ? (
+        <section className="message-layout">
+          <MessageList
+            filter={messageFilter}
+            messages={filteredMessages}
+            onFilterChange={handleFilterChange}
+            onSelect={handleSelect}
+            selectedId={selectedId}
+            statusText={messageListStatus}
+            totalCount={messages.length}
+          />
+        </section>
+      ) : (
+        <UserInfoScreen
+          loading={loadingUsers}
+          onBack={showMessageView}
+          onRefresh={() => void loadUsers()}
+          statusText={status || "取得済みのユーザ情報を表示します。"}
+          users={users}
         />
-      </section>
+      )}
       <MessageDetailModal message={selectedMessage} onClose={closeMessageModal} />
     </main>
+  );
+}
+
+function UserInfoScreen({
+  loading,
+  onBack,
+  onRefresh,
+  statusText,
+  users,
+}: {
+  loading: boolean;
+  onBack: () => void;
+  onRefresh: () => void;
+  statusText: string;
+  users: UserInfoView[];
+}) {
+  return (
+    <section className="user-info-screen">
+      <div className="user-info-header">
+        <div>
+          <h2>ユーザ情報</h2>
+          <p className="status-text">{loading ? "ユーザ情報を更新中です。" : statusText}</p>
+        </div>
+        <div className="user-info-actions">
+          <button className="secondary" onClick={onBack} type="button">
+            メッセージへ戻る
+          </button>
+          <button onClick={onRefresh} type="button" disabled={loading}>
+            更新
+          </button>
+        </div>
+      </div>
+
+      {users.length ? (
+        <div className="user-info-list" role="list">
+          {users.map((user) => (
+            <article className="user-info-card" key={user.userId} role="listitem">
+              <label className="user-info-checkbox" aria-label={`${user.userName}を選択`}>
+                <input type="checkbox" />
+              </label>
+              <dl className="user-info-details">
+                <div>
+                  <dt>アカウント名</dt>
+                  <dd>{user.userName}</dd>
+                </div>
+                <div>
+                  <dt>USER ID</dt>
+                  <dd>{user.userId}</dd>
+                </div>
+                <div>
+                  <dt>取得日時</dt>
+                  <dd>{formatTime(user.fetchedAt)}</dd>
+                </div>
+              </dl>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="panel empty-message-panel">
+          {loading ? "ユーザ情報を読み込んでいます。" : "表示できるユーザ情報はありません。"}
+        </div>
+      )}
+    </section>
   );
 }
 

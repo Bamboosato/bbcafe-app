@@ -560,3 +560,96 @@ label {
     grid-template-columns: 1fr;
   }
 }
+
+.account-user-info {
+  width: 100%;
+}
+
+.user-info-screen {
+  display: grid;
+  gap: 14px;
+}
+
+.user-info-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.user-info-header h2 {
+  font-size: 20px;
+  line-height: 1.3;
+  margin: 0 0 4px;
+}
+
+.user-info-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.user-info-list {
+  display: grid;
+  gap: 10px;
+}
+
+.user-info-card {
+  align-items: flex-start;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 14px;
+}
+
+.user-info-checkbox {
+  display: flex;
+  min-height: 40px;
+  place-items: center;
+}
+
+.user-info-checkbox input {
+  height: 20px;
+  min-height: 20px;
+  width: 20px;
+}
+
+.user-info-details {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.user-info-details div {
+  display: grid;
+  gap: 3px;
+}
+
+.user-info-details dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.user-info-details dd {
+  font-weight: 700;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .user-info-header {
+    display: grid;
+  }
+
+  .user-info-actions {
+    justify-content: stretch;
+  }
+
+  .user-info-actions button {
+    flex: 1 1 140px;
+  }
+}

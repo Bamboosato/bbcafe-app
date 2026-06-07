@@ -2,7 +2,7 @@ import { FieldValue, Timestamp, WriteBatch } from "firebase-admin/firestore";
 import { randomHex, stableHash } from "@/lib/server/crypto";
 import { getAdminDb } from "@/lib/server/firebase";
 import { toIsoString, toTimestamp } from "@/lib/server/firestoreUtils";
-import type { CronRunView, MessageView, SourceType } from "../types";
+import type { CronRunView, MessageView, SourceType, UserInfoView } from "../types";
 
 const PROTECTED_RECENT_COUNT = 1000;
 const MAX_DAILY_DELETE_COUNT = 10000;
@@ -135,6 +135,30 @@ export async function listVisibleMessages(lineAccountId: string, limit = 100) {
     .sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.messageId.localeCompare(left.messageId))
     .slice(0, normalizedLimit)
     .map(toMessageView);
+}
+
+export async function listUserInfos(lineAccountId: string, limit = 1000): Promise<UserInfoView[]> {
+  const snapshot = await getRecentMessagesByReceivedAtSnapshot(lineAccountId, normalizeLimit(limit, 1000));
+  const users = new Map<string, UserInfoView>();
+
+  for (const doc of snapshot.docs) {
+    const record = toMessageRecord(doc.id, doc.data());
+
+    if (!record.sourceUserId || users.has(record.sourceUserId)) {
+      continue;
+    }
+
+    users.set(record.sourceUserId, {
+      fetchedAt: record.receivedAt,
+      lineAccountId: record.lineAccountId,
+      userId: record.sourceUserId,
+      userName: record.senderDisplayName,
+    });
+  }
+
+  return [...users.values()].sort(
+    (left, right) => right.fetchedAt.localeCompare(left.fetchedAt) || left.userName.localeCompare(right.userName, "ja"),
+  );
 }
 
 export async function getVisibleMessage(lineAccountId: string, messageId: string) {
@@ -309,6 +333,25 @@ function normalizeLimit(value: number, max = 200) {
   }
 
   return Math.min(value, max);
+}
+
+async function getRecentMessagesByReceivedAtSnapshot(lineAccountId: string, limit: number) {
+  const db = getAdminDb();
+
+  try {
+    return await db
+      .collection("messages")
+      .where("lineAccountId", "==", lineAccountId)
+      .orderBy("receivedAt", "desc")
+      .limit(limit)
+      .get();
+  } catch (error) {
+    if (!isMissingIndexError(error)) {
+      throw error;
+    }
+
+    return db.collection("messages").where("lineAccountId", "==", lineAccountId).limit(limit).get();
+  }
 }
 
 async function getRecentMessagesSnapshot(lineAccountId: string, limit: number) {
