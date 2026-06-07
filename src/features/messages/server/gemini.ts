@@ -2,6 +2,7 @@ import { fetchWithRateLimitRetry } from "./rateLimitRetry";
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_MESSAGE_LOCATION = "日本";
+const DAILY_GREETING_MAX_OUTPUT_TOKENS = 1024;
 
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
@@ -10,6 +11,7 @@ type GeminiGenerateContentResponse = {
         text?: string;
       }>;
     };
+    finishReason?: string;
   }>;
 };
 
@@ -45,7 +47,7 @@ export async function generateDailyGreetingMessage({
           },
         ],
         generationConfig: {
-          maxOutputTokens: 240,
+          maxOutputTokens: DAILY_GREETING_MAX_OUTPUT_TOKENS,
           temperature: 0.8,
         },
       }),
@@ -63,13 +65,23 @@ export async function generateDailyGreetingMessage({
     throw new Error(payload.error?.message || "Gemini API request failed.");
   }
 
-  const text = payload.candidates?.[0]?.content?.parts
+  const candidate = payload.candidates?.[0];
+  const finishReason = candidate?.finishReason;
+  const text = candidate?.content?.parts
     ?.map((part) => part.text ?? "")
     .join("")
     .trim();
 
+  if (finishReason && finishReason !== "STOP") {
+    throw new Error(`Gemini API stopped before completing the message: ${finishReason}.`);
+  }
+
   if (!text) {
     throw new Error("Gemini API did not return message text.");
+  }
+
+  if (looksIncompleteDailyGreeting(text)) {
+    throw new Error("Gemini API returned an incomplete message.");
   }
 
   return {
@@ -91,10 +103,17 @@ function buildDailyGreetingPrompt({ location, today }: { location: string; today
 その情報をもとに、高齢者の方に向けた「今日の一言メッセージ（挨拶文）」を1つ作成してください。
 
 【条件】
+・2〜4文程度で完結させる
 ・「今日の季節感や暦」の話題から会話を始める
 ・専門用語は使わず、語りかけるような優しい口調にする
 ・体調を気遣う一言で締めくくる
 ・スマホLINEで読みやすいよう、適度に改行を入れる
 ・本文のみを出力する
 `.trim();
+}
+
+function looksIncompleteDailyGreeting(text: string) {
+  const trimmedText = text.trim();
+
+  return trimmedText.length < 30 || /[、,，]$/.test(trimmedText) || !/[。.!?！？]$/.test(trimmedText);
 }
