@@ -5,6 +5,7 @@ const DEFAULT_MESSAGE_LOCATION = "日本";
 const DAILY_GREETING_MAX_OUTPUT_TOKENS = 1024;
 const DAILY_GREETING_TIME_ZONE = "Asia/Tokyo";
 const TIME_OF_DAY_GREETINGS = ["お早うございます。", "こんにちは。", "こんばんは。"] as const;
+const UNKNOWN_GENERATION_ERROR_SUMMARY = "メッセージ生成APIで不明なエラーが発生しました。";
 
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
@@ -23,6 +24,16 @@ type GeminiErrorResponse = {
   };
 };
 
+class GeminiMessageGenerationError extends Error {
+  constructor(
+    message: string,
+    readonly summary: string,
+  ) {
+    super(message);
+    this.name = "GeminiMessageGenerationError";
+  }
+}
+
 export async function generateDailyGreetingMessage({
   location = process.env.MESSAGE_LOCATION?.trim() || DEFAULT_MESSAGE_LOCATION,
   today = new Date(),
@@ -33,7 +44,10 @@ export async function generateDailyGreetingMessage({
   const apiKey = process.env.GEMINI_API_KEY?.trim();
 
   if (!apiKey) {
-    throw new Error("Missing required environment variable: GEMINI_API_KEY");
+    throw new GeminiMessageGenerationError(
+      "Missing required environment variable: GEMINI_API_KEY",
+      "Gemini APIキーが設定されていません。",
+    );
   }
 
   const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
@@ -65,7 +79,12 @@ export async function generateDailyGreetingMessage({
   const payload = (await response.json().catch(() => ({}))) as GeminiErrorResponse & GeminiGenerateContentResponse;
 
   if (!response.ok) {
-    throw new Error(payload.error?.message || "Gemini API request failed.");
+    const apiSummary = payload.error?.message || response.statusText || "Gemini API request failed.";
+
+    throw new GeminiMessageGenerationError(
+      apiSummary,
+      `Gemini APIエラー ${response.status}: ${apiSummary}`,
+    );
   }
 
   const candidate = payload.candidates?.[0];
@@ -76,23 +95,44 @@ export async function generateDailyGreetingMessage({
     .trim();
 
   if (finishReason && finishReason !== "STOP") {
-    throw new Error(`Gemini API stopped before completing the message: ${finishReason}.`);
+    throw new GeminiMessageGenerationError(
+      `Gemini API stopped before completing the message: ${finishReason}.`,
+      `Gemini APIが途中で停止しました: ${finishReason}`,
+    );
   }
 
   if (!generatedText) {
-    throw new Error("Gemini API did not return message text.");
+    throw new GeminiMessageGenerationError(
+      "Gemini API did not return message text.",
+      "Gemini APIからメッセージ本文が返されませんでした。",
+    );
   }
 
   const text = formatDailyGreetingForSend(generatedText, today);
 
   if (looksIncompleteDailyGreeting(text)) {
-    throw new Error("Gemini API returned an incomplete message.");
+    throw new GeminiMessageGenerationError(
+      "Gemini API returned an incomplete message.",
+      "Gemini APIから不完全なメッセージが返されました。",
+    );
   }
 
   return {
     location,
     text,
   };
+}
+
+export function summarizeDailyGreetingGenerationError(error: unknown) {
+  if (error instanceof GeminiMessageGenerationError) {
+    return error.summary;
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return UNKNOWN_GENERATION_ERROR_SUMMARY;
 }
 
 function buildDailyGreetingPrompt({
