@@ -17,6 +17,7 @@ type SaveTextMessageInput = {
   sourceGroupId: null | string;
   sourceGroupName: null | string;
   sourceType: SourceType;
+  sourceUserDisplayName: string;
   sourceUserId: null | string;
   text: string;
   webhookEventId: string;
@@ -57,6 +58,7 @@ export async function saveTextMessage(input: SaveTextMessageInput) {
       sourceGroupId: input.sourceGroupId,
       sourceGroupName: input.sourceGroupName,
       sourceType: input.sourceType,
+      sourceUserDisplayName: input.sourceUserDisplayName,
       sourceUserId: input.sourceUserId,
       text: input.text,
       webhookEventId: input.webhookEventId,
@@ -346,6 +348,10 @@ function toMessageRecord(messageId: string, data: FirebaseFirestore.DocumentData
     sourceGroupId: typeof data.sourceGroupId === "string" ? data.sourceGroupId : null,
     sourceGroupName: typeof data.sourceGroupName === "string" ? data.sourceGroupName : null,
     sourceType: data.sourceType === "group" ? "group" : "user",
+    sourceUserDisplayName:
+      typeof data.sourceUserDisplayName === "string"
+        ? data.sourceUserDisplayName
+        : String(data.senderDisplayName ?? "不明なユーザー"),
     sourceUserId: typeof data.sourceUserId === "string" ? data.sourceUserId : null,
     text: String(data.text ?? ""),
     webhookEventId: String(data.webhookEventId ?? ""),
@@ -363,6 +369,8 @@ function toMessageView(record: MessageRecord): MessageView {
     sourceGroupId: record.sourceGroupId,
     sourceGroupName: record.sourceGroupName,
     sourceType: record.sourceType,
+    sourceUserDisplayName: record.sourceUserDisplayName,
+    sourceUserId: record.sourceUserId,
     text: record.text,
   };
 }

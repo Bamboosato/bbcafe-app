@@ -19,6 +19,8 @@ export type MessageView = {
   sourceGroupId: null | string;
   sourceGroupName: null | string;
   sourceType: SourceType;
+  sourceUserDisplayName: string;
+  sourceUserId: null | string;
   senderDisplayName: string;
   text: string;
 };

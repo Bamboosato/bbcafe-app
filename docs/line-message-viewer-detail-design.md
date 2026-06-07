@@ -414,6 +414,7 @@ cronRuns/{runId}
   "sourceUserId": "Uxxxxxxxx",
   "sourceGroupId": null,
   "sourceGroupName": null,
+  "sourceUserDisplayName": "山田太郎",
   "senderDisplayName": "山田太郎",
   "text": "こんにちは",
   "messageType": "text",
@@ -432,6 +433,7 @@ cronRuns/{runId}
   "sourceUserId": "Uxxxxxxxx",
   "sourceGroupId": "Cxxxxxxxx",
   "sourceGroupName": "ユーザグループ",
+  "sourceUserDisplayName": "山田太郎",
   "senderDisplayName": "山田太郎"
 }
 ```
@@ -578,10 +580,11 @@ source.groupId + source.userId からグループメンバープロフィール�
 失敗時:
 
 ```text
+sourceUserDisplayName = "不明なユーザー"
 senderDisplayName = "不明なユーザー"
 ```
 
-送信者名は投稿時点の値として固定保存する。
+送信者のUser ID（`sourceUserId`）と表示名（`sourceUserDisplayName` / `senderDisplayName`）は投稿時点の値として固定保存する。
 
 ### 9.6 グループ名取得
 
