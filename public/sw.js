@@ -84,6 +84,7 @@ self.addEventListener("notificationclick", (event) => {
           return client.focus().then((focusedClient) => {
             focusedClient.postMessage({
               type: "bbcafe:notification-click",
+              url: rawUrl,
             });
 
             return focusedClient;

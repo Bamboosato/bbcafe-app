@@ -3,6 +3,7 @@ import { safeStringEqual, stableHash } from "@/lib/server/crypto";
 import { getLineAccount } from "./lineAccounts";
 import { saveTextMessage, deleteMessagesByLineMessageId } from "./messages";
 import { sendNewMessagePushNotifications } from "./pushNotifications";
+import { upsertBroadcastUser } from "./broadcasts";
 
 const FALLBACK_GROUP_NAME = "ユーザグループ";
 const FALLBACK_USER_NAME = "不明なユーザー";
@@ -107,6 +108,17 @@ async function processTextMessageEvent(
   const account = await getLineAccount(lineAccountId);
   const expiresAt = new Date(sentAt.getTime() + account.retentionDays * 24 * 60 * 60 * 1000);
   const webhookEventId = event.webhookEventId || stableHash(`${lineMessageId}:${sentAt.toISOString()}`);
+
+  if (sourceUserId) {
+    await upsertBroadcastUser({
+      lastMessageAt: sentAt,
+      lastSeenAt: new Date(),
+      lineAccountId,
+      userId: sourceUserId,
+      userName: sourceUserDisplayName,
+    });
+  }
+
   const result = await saveTextMessage({
     expiresAt,
     lineAccountId,

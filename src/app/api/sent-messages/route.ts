@@ -1,10 +1,7 @@
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireViewerSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
-import {
-  backfillBroadcastUsersFromMessages,
-  listBroadcastUsers,
-} from "@/features/messages/server/broadcasts";
+import { listSendRuns } from "@/features/messages/server/broadcasts";
 
 export const runtime = "nodejs";
 
@@ -17,16 +14,17 @@ export async function GET(request: Request) {
   }
 
   try {
-    await backfillBroadcastUsersFromMessages(auth.payload.lineAccountId);
-    const users = await listBroadcastUsers(auth.payload.lineAccountId);
+    const url = new URL(request.url);
+    const limit = Number(url.searchParams.get("limit") ?? 100);
+    const runs = await listSendRuns(auth.payload.lineAccountId, limit);
 
-    return jsonData({ users }, requestId);
+    return jsonData({ runs }, requestId);
   } catch (error) {
-    console.error("[users-list] failed", {
+    console.error("[sent-messages-list] failed", {
       message: error instanceof Error ? error.message : String(error),
       requestId,
     });
 
-    return jsonError(503, "SERVICE_UNAVAILABLE", "ユーザ情報を取得できません。", requestId);
+    return jsonError(503, "SERVICE_UNAVAILABLE", "送信履歴を取得できません。", requestId);
   }
 }

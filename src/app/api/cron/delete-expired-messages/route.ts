@@ -2,6 +2,7 @@ import { jsonData, jsonError } from "@/lib/server/api-response";
 import { createRequestId } from "@/lib/server/request";
 import { DEFAULT_LINE_ACCOUNT_ID } from "@/features/messages/server/lineAccounts";
 import { runExpiredMessageDeletion } from "@/features/messages/server/messages";
+import { deleteExpiredSendRuns } from "@/features/messages/server/broadcasts";
 
 export const runtime = "nodejs";
 
@@ -22,9 +23,19 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await runExpiredMessageDeletion(DEFAULT_LINE_ACCOUNT_ID);
+    const [messagesResult, sendRunsResult] = await Promise.all([
+      runExpiredMessageDeletion(DEFAULT_LINE_ACCOUNT_ID),
+      deleteExpiredSendRuns(DEFAULT_LINE_ACCOUNT_ID),
+    ]);
 
-    return jsonData(result, requestId);
+    return jsonData(
+      {
+        ...messagesResult,
+        sendRunsDeletedCount: sendRunsResult.deletedCount,
+        sendRunsFailedCount: sendRunsResult.failedCount,
+      },
+      requestId,
+    );
   } catch (error) {
     console.error("[cron-delete-expired-messages] failed", {
       message: error instanceof Error ? error.message : String(error),
