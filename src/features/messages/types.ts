@@ -10,6 +10,14 @@ export type LineAccountView = {
   viewerSharedId: string;
 };
 
+export type CommonSettingsView = {
+  displayName: string;
+  lineAccountId: string;
+  receivedRetentionDays: number;
+  sentRetentionDays: number;
+  viewerSharedId: string;
+};
+
 export type UserInfoView = {
   broadcastSelected: boolean;
   fetchedAt: string;
@@ -88,4 +96,15 @@ export type CronRunView = {
   skippedReason: null | string;
   startedAt: string;
   status: "failed" | "skipped" | "success";
+};
+
+export type CronHistoryItemKind = "delete_expired_messages" | "send_daily_message";
+
+export type CronHistoryItemView = {
+  finishedAt: null | string;
+  id: string;
+  kind: CronHistoryItemKind;
+  startedAt: string;
+  status: string;
+  summary: string;
 };

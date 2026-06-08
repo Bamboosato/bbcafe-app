@@ -18,6 +18,10 @@ describe("firestore index coverage", () => {
   it("defines the expired-message index used by retention deletion", () => {
     expect(hasCollectionIndex("messages", ["lineAccountId:ASCENDING", "expiresAt:ASCENDING"])).toBe(true);
   });
+
+  it("defines the auto-send history index used by cron history", () => {
+    expect(hasCollectionIndex("sendRuns", ["mode:ASCENDING", "sentAt:DESCENDING"])).toBe(true);
+  });
 });
 
 function hasCollectionIndex(collectionGroup: string, requiredFields: string[]) {

@@ -107,33 +107,12 @@ export async function deleteMessage(lineAccountId: string, messageId: string) {
 }
 
 export async function listVisibleMessages(lineAccountId: string, limit = 100) {
-  const db = getAdminDb();
-  const now = Timestamp.now();
   const normalizedLimit = normalizeLimit(limit);
-  const recentSnapshot = await getRecentMessagesSnapshot(lineAccountId, PROTECTED_RECENT_COUNT);
-  const records = new Map<string, MessageRecord>();
+  const recentSnapshot = await getRecentMessagesSnapshot(lineAccountId, normalizedLimit);
 
-  for (const doc of recentSnapshot.docs) {
-    records.set(doc.id, toMessageRecord(doc.id, doc.data()));
-  }
-
-  if (recentSnapshot.size >= PROTECTED_RECENT_COUNT) {
-    const unexpiredSnapshot = await db
-      .collection("messages")
-      .where("lineAccountId", "==", lineAccountId)
-      .where("expiresAt", ">", now)
-      .orderBy("expiresAt", "desc")
-      .limit(PROTECTED_RECENT_COUNT)
-      .get();
-
-    for (const doc of unexpiredSnapshot.docs) {
-      records.set(doc.id, toMessageRecord(doc.id, doc.data()));
-    }
-  }
-
-  return [...records.values()]
+  return recentSnapshot.docs
+    .map((doc) => toMessageRecord(doc.id, doc.data()))
     .sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.messageId.localeCompare(left.messageId))
-    .slice(0, normalizedLimit)
     .map(toMessageView);
 }
 

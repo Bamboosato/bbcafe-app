@@ -228,8 +228,15 @@ label {
 }
 
 .message-list-status {
-  flex: 1 1 180px;
   text-align: right;
+}
+
+.message-list-actions {
+  align-items: center;
+  display: flex;
+  flex: 1 1 240px;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .message-list {
@@ -284,6 +291,9 @@ label {
 
 .empty-message-panel {
   color: var(--muted);
+}
+
+.message-layout .empty-message-panel {
   grid-area: list;
 }
 
@@ -680,17 +690,38 @@ label {
   gap: 14px;
 }
 
-.sent-history-header {
+.sent-history-header,
+.settings-header,
+.cron-history-header {
   align-items: flex-start;
   display: flex;
   gap: 12px;
   justify-content: space-between;
 }
 
-.sent-history-header h2 {
+.sent-history-header h2,
+.settings-header h2,
+.cron-history-header h2 {
   font-size: 20px;
   line-height: 1.3;
   margin: 0 0 4px;
+}
+
+.sent-history-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.sent-history-actions .status-text {
+  text-align: right;
+}
+
+.settings-screen,
+.cron-history-screen {
+  display: grid;
+  gap: 14px;
 }
 
 .sent-run-list {
@@ -861,12 +892,43 @@ label {
 }
 
 @media (max-width: 600px) {
-  .sent-history-header {
+  .message-list-actions {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .message-list-actions button {
+    flex: 0 0 auto;
+  }
+
+  .message-list-status {
+    flex: 1 1 auto;
+    text-align: left;
+  }
+
+  .sent-history-header,
+  .settings-header,
+  .cron-history-header {
     display: grid;
   }
 
-  .sent-history-header button {
+  .settings-header button,
+  .cron-history-header button {
     width: 100%;
+  }
+
+  .sent-history-actions {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .sent-history-actions .status-text {
+    flex: 1 1 auto;
+    text-align: left;
+  }
+
+  .sent-history-actions button {
+    flex: 0 0 auto;
   }
 
   .send-run-detail-meta,
