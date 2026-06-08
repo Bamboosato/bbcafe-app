@@ -55,6 +55,16 @@ WEB_PUSH_SUBJECT=mailto:your-contact@example.com
 
 Firestoreはサーバー側のFirebase Admin SDKからのみアクセスする前提です。`firestore.rules` はクライアント直読みを拒否し、`firestore.indexes.json` に必要な複合indexを定義しています。
 
+## Firestore indexの反映
+
+自動削除とメッセージ一覧は `messages` の複合indexを前提にしています。自動削除履歴に `FAILED_PRECONDITION: The query requires an index` が出た場合は、Firebaseプロジェクトへ `firestore.indexes.json` が未反映です。
+
+```bash
+npx firebase-tools deploy --only firestore:indexes --project bbcafe-app
+```
+
+`firebase.json` は `firestore.indexes.json` を参照しています。index作成中は同じエラーが続くことがあるため、Firebase Consoleで作成完了を確認してからCronを再実行してください。
+
 ## LINE Webhook URL
 
 Production:
