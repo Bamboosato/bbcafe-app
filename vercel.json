@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/delete-expired-messages",
       "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/send-daily-message",
+      "schedule": "0 22 * * *"
     }
   ]
 }

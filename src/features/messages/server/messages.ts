@@ -149,7 +149,11 @@ export async function listUserInfos(lineAccountId: string, limit = 1000): Promis
     }
 
     users.set(record.sourceUserId, {
+      broadcastSelected: false,
       fetchedAt: record.receivedAt,
+      firstSeenAt: record.receivedAt,
+      lastMessageAt: record.sentAt,
+      lastSeenAt: record.receivedAt,
       lineAccountId: record.lineAccountId,
       userId: record.sourceUserId,
       userName: record.senderDisplayName,

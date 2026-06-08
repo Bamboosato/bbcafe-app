@@ -45,6 +45,19 @@ type SendNewMessagePushNotificationsInput = {
   viewerSharedId: string;
 };
 
+type PushNotificationPayload = {
+  body: string;
+  tag: string;
+  title: string;
+  url: string;
+};
+
+type SendPushNotificationsInput = {
+  lineAccountId: string;
+  payload: PushNotificationPayload;
+  viewerSharedId: string;
+};
+
 let configuredVapidKey = "";
 
 export function getWebPushPublicKey() {
@@ -82,6 +95,15 @@ export function buildNewMessagePushPayload(viewerSharedId: string) {
     tag: `new-message:${viewerSharedId}`,
     title: "BB Cafe Messages",
     url: "/",
+  };
+}
+
+export function buildAutoBroadcastResultPushPayload(body: string) {
+  return {
+    body,
+    tag: "auto-broadcast-result",
+    title: "BB Cafe Messages",
+    url: "/sent",
   };
 }
 
@@ -154,6 +176,14 @@ export async function deletePushSubscription(input: DeletePushSubscriptionInput)
 }
 
 export async function sendNewMessagePushNotifications(input: SendNewMessagePushNotificationsInput) {
+  return sendPushNotificationsToViewers({
+    lineAccountId: input.lineAccountId,
+    payload: buildNewMessagePushPayload(input.viewerSharedId),
+    viewerSharedId: input.viewerSharedId,
+  });
+}
+
+export async function sendPushNotificationsToViewers(input: SendPushNotificationsInput) {
   const config = configureWebPush();
 
   if (!config) {
@@ -172,7 +202,7 @@ export async function sendNewMessagePushNotifications(input: SendNewMessagePushN
     .limit(MAX_SUBSCRIPTIONS_PER_ACCOUNT)
     .get();
 
-  const payload = JSON.stringify(buildNewMessagePushPayload(input.viewerSharedId));
+  const payload = JSON.stringify(input.payload);
   let failed = 0;
   let sent = 0;
   let staleDeleted = 0;

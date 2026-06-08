@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildNewMessagePushPayload, normalizePushSubscription } from "./pushNotifications";
+import {
+  buildAutoBroadcastResultPushPayload,
+  buildNewMessagePushPayload,
+  normalizePushSubscription,
+} from "./pushNotifications";
 
 describe("push notification helpers", () => {
   it("builds a shared-id scoped new message payload", () => {
@@ -8,6 +12,15 @@ describe("push notification helpers", () => {
       tag: "new-message:bbcafe",
       title: "BB Cafe Messages",
       url: "/",
+    });
+  });
+
+  it("builds an auto broadcast result payload that opens send history", () => {
+    expect(buildAutoBroadcastResultPushPayload("自動送信が完了しました（成功5件 / 失敗0件）")).toEqual({
+      body: "自動送信が完了しました（成功5件 / 失敗0件）",
+      tag: "auto-broadcast-result",
+      title: "BB Cafe Messages",
+      url: "/sent",
     });
   });
 

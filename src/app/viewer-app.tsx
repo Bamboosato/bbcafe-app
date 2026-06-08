@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   filterMessages,
@@ -7,7 +9,14 @@ import {
   MESSAGE_FILTER_OPTIONS,
   type MessageFilter,
 } from "@/features/messages/messageFilter";
-import type { MessageView, UserInfoView } from "@/features/messages/types";
+import type {
+  AutomationSettingsView,
+  MessageView,
+  SendRunView,
+  UserInfoView,
+} from "@/features/messages/types";
+
+type ViewerView = "generated-message" | "messages" | "sent" | "users";
 
 type ApiEnvelope<T> = {
   data?: T;
@@ -29,8 +38,20 @@ type UsersResponse = {
   users: UserInfoView[];
 };
 
+type UserResponse = {
+  user: UserInfoView;
+};
+
 type MessageResponse = {
   message: MessageView;
+};
+
+type SentRunsResponse = {
+  runs: SendRunView[];
+};
+
+type AutomationSettingsResponse = {
+  settings: AutomationSettingsView;
 };
 
 type AppVersionResponse = {
@@ -49,47 +70,63 @@ type GenerateMessageResponse = {
 
 type SendGeneratedMessageResponse = {
   failedCount: number;
+  run?: SendRunView | null;
   sentCount: number;
   totalCount: number;
 };
 
-export default function ViewerApp({ appVersion }: { appVersion: string }) {
+export default function ViewerApp({
+  appVersion,
+  initialView = "messages",
+}: {
+  appVersion: string;
+  initialView?: ViewerView;
+}) {
+  const router = useRouter();
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [sharedId, setSharedId] = useState("bbcafe");
   const [password, setPassword] = useState("");
   const [messages, setMessages] = useState<MessageView[]>([]);
+  const [sentRuns, setSentRuns] = useState<SendRunView[]>([]);
   const [users, setUsers] = useState<UserInfoView[]>([]);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
-  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [selectedSendRun, setSelectedSendRun] = useState<SendRunView | null>(null);
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [generatedMessageLocation, setGeneratedMessageLocation] = useState("");
   const [generatedMessageStatus, setGeneratedMessageStatus] = useState("");
   const [generatingMessage, setGeneratingMessage] = useState(false);
   const [sendingGeneratedMessage, setSendingGeneratedMessage] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<"generated-message" | "messages" | "users">("messages");
+  const [navMenuOpen, setNavMenuOpen] = useState(false);
+  const [automationSettings, setAutomationSettings] = useState<AutomationSettingsView | null>(null);
+  const [savingAutomationSettings, setSavingAutomationSettings] = useState(false);
   const [pushCapabilityChecked, setPushCapabilityChecked] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushStatus, setPushStatus] = useState("");
   const [pushSupported, setPushSupported] = useState(false);
   const [pushUpdating, setPushUpdating] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingSentRuns, setLoadingSentRuns] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const navMenuRef = useRef<HTMLDivElement | null>(null);
   const authenticatedRef = useRef(false);
   const loadingMessagesRef = useRef(false);
+  const loadingSentRunsRef = useRef(false);
   const loadingUsersRef = useRef(false);
 
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
   const selectedUsers = useMemo(
-    () => users.filter((user) => selectedUserIds.includes(user.userId)),
-    [selectedUserIds, users],
+    () => users.filter((user) => user.broadcastSelected),
+    [users],
   );
+  const selectedUserIds = useMemo(() => selectedUsers.map((user) => user.userId), [selectedUsers]);
+  const currentView = initialView;
   const messageListStatus = loadingMessages ? "更新中です。" : status || "60秒ごとに自動更新します。";
 
   const checkForAppUpdate = useCallback(async () => {
@@ -161,25 +198,70 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     }
   }, []);
 
-  function showUserInfoView() {
-    setCurrentView("users");
+  const loadSentRuns = useCallback(async () => {
+    if (loadingSentRunsRef.current) {
+      return;
+    }
+
+    loadingSentRunsRef.current = true;
+    setLoadingSentRuns(true);
+    setError("");
+
+    try {
+      const result = await fetchJson<SentRunsResponse>("/api/sent-messages?limit=100", {
+        cache: "no-store",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      const nextRuns = result.data?.runs ?? [];
+      setSentRuns(nextRuns);
+      setSelectedSendRun((current) =>
+        current && !nextRuns.some((run) => run.runId === current.runId) ? null : current,
+      );
+      setStatus(`送信履歴の最終更新: ${formatTime(new Date().toISOString())}`);
+    } finally {
+      loadingSentRunsRef.current = false;
+      setLoadingSentRuns(false);
+    }
+  }, []);
+
+  const loadAutomationSettings = useCallback(async () => {
+    setError("");
+
+    const result = await fetchJson<AutomationSettingsResponse>("/api/message-assistant/automation-settings", {
+      cache: "no-store",
+    });
+
+    if (result.error) {
+      setError(result.error.message);
+      return;
+    }
+
+    setAutomationSettings(result.data?.settings ?? null);
+  }, []);
+
+  function navigateToView(view: ViewerView) {
     setAccountMenuOpen(false);
+    setNavMenuOpen(false);
     setSelectedMessage(null);
-    void loadUsers();
+    setSelectedSendRun(null);
+    router.push(routeForView(view));
+  }
+
+  function showUserInfoView() {
+    navigateToView("users");
   }
 
   function showGeneratedMessageView() {
-    setCurrentView("generated-message");
-    setAccountMenuOpen(false);
-    setSelectedMessage(null);
-
-    if (users.length === 0) {
-      void loadUsers();
-    }
+    navigateToView("generated-message");
   }
 
   function showMessageView() {
-    setCurrentView("messages");
+    navigateToView("messages");
   }
 
   const refreshVisibleMessages = useCallback(() => {
@@ -213,6 +295,31 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
       active = false;
     };
   }, [loadMessages]);
+
+  useEffect(() => {
+    if (!authenticated) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (currentView === "users") {
+        void loadUsers();
+      }
+
+      if (currentView === "generated-message") {
+        if (users.length === 0) {
+          void loadUsers();
+        }
+        void loadAutomationSettings();
+      }
+
+      if (currentView === "sent") {
+        void loadSentRuns();
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [authenticated, currentView, loadAutomationSettings, loadSentRuns, loadUsers, users.length]);
 
   useEffect(() => {
     authenticatedRef.current = authenticated;
@@ -278,6 +385,11 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
 
     function handleServiceWorkerMessage(event: MessageEvent) {
       if (event.data?.type === "bbcafe:notification-click") {
+        if (event.data?.url === "/sent") {
+          void loadSentRuns();
+          return;
+        }
+
         refreshVisibleMessages();
       }
     }
@@ -285,7 +397,7 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
 
     return () => navigator.serviceWorker.removeEventListener("message", handleServiceWorkerMessage);
-  }, [refreshVisibleMessages]);
+  }, [loadSentRuns, refreshVisibleMessages]);
 
   useEffect(() => {
     if (!authenticated) {
@@ -332,25 +444,29 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
   }, [authenticated]);
 
   useEffect(() => {
-    if (!accountMenuOpen) {
+    if (!accountMenuOpen && !navMenuOpen) {
       return;
     }
 
     function handlePointerDown(event: PointerEvent) {
-      if (accountMenuRef.current?.contains(event.target as Node)) {
+      if (
+        accountMenuRef.current?.contains(event.target as Node) ||
+        navMenuRef.current?.contains(event.target as Node)
+      ) {
         return;
       }
 
       setAccountMenuOpen(false);
+      setNavMenuOpen(false);
     }
 
     document.addEventListener("pointerdown", handlePointerDown);
 
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [accountMenuOpen]);
+  }, [accountMenuOpen, navMenuOpen]);
 
   useEffect(() => {
-    if (!selectedMessage && !accountMenuOpen) {
+    if (!selectedMessage && !selectedSendRun && !accountMenuOpen && !navMenuOpen) {
       return;
     }
 
@@ -360,16 +476,18 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
       }
 
       setSelectedMessage(null);
+      setSelectedSendRun(null);
       setAccountMenuOpen(false);
+      setNavMenuOpen(false);
     }
 
     window.addEventListener("keydown", handleKeyDown);
 
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [accountMenuOpen, selectedMessage]);
+  }, [accountMenuOpen, navMenuOpen, selectedMessage, selectedSendRun]);
 
   useEffect(() => {
-    if (!selectedMessage) {
+    if (!selectedMessage && !selectedSendRun) {
       return;
     }
 
@@ -379,7 +497,7 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [selectedMessage]);
+  }, [selectedMessage, selectedSendRun]);
 
   async function enablePushNotifications() {
     if (!isPushNotificationSupported()) {
@@ -512,7 +630,15 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
 
     setPassword("");
     setAuthenticated(true);
-    await loadMessages();
+    if (currentView === "messages") {
+      await loadMessages();
+    } else if (currentView === "users") {
+      await loadUsers();
+    } else if (currentView === "sent") {
+      await loadSentRuns();
+    } else {
+      await Promise.all([loadUsers(), loadAutomationSettings()]);
+    }
   }
 
   async function handleLogout() {
@@ -523,11 +649,13 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     await fetchJson("/api/viewer/logout", { method: "POST" });
     setAuthenticated(false);
     setAccountMenuOpen(false);
-    setCurrentView("messages");
+    setNavMenuOpen(false);
     setMessageFilter("all");
     setMessages([]);
+    setSentRuns([]);
     setUsers([]);
-    setSelectedUserIds([]);
+    setSelectedSendRun(null);
+    setAutomationSettings(null);
     setGeneratedMessage("");
     setGeneratedMessageLocation("");
     setGeneratedMessageStatus("");
@@ -537,6 +665,7 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     setPushSupported(false);
     setPushUpdating(false);
     setSelectedMessage(null);
+    router.push("/");
   }
 
   function handleFilterChange(nextFilter: MessageFilter) {
@@ -544,14 +673,31 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
     setSelectedMessage((current) => (current && !matchesMessageFilter(current, nextFilter) ? null : current));
   }
 
-  function handleUserSelectionChange(userId: string, selected: boolean) {
-    setSelectedUserIds((current) => {
-      if (selected) {
-        return current.includes(userId) ? current : [...current, userId];
-      }
+  async function handleUserSelectionChange(userId: string, selected: boolean) {
+    const previousUsers = users;
 
-      return current.filter((currentUserId) => currentUserId !== userId);
+    setError("");
+    setUsers((current) =>
+      current.map((user) => (user.userId === userId ? { ...user, broadcastSelected: selected } : user)),
+    );
+
+    const result = await fetchJson<UserResponse>(`/api/users/${encodeURIComponent(userId)}`, {
+      body: JSON.stringify({ selected }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "PATCH",
     });
+
+    if (result.error || !result.data?.user) {
+      setUsers(previousUsers);
+      setError(result.error?.message ?? "ユーザ情報を更新できません。");
+      return;
+    }
+
+    setUsers((current) =>
+      current.map((user) => (user.userId === userId ? result.data?.user ?? user : user)),
+    );
   }
 
   async function handleGenerateMessage() {
@@ -586,7 +732,6 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
       const result = await fetchJson<SendGeneratedMessageResponse>("/api/message-assistant/send", {
         body: JSON.stringify({
           message: generatedMessage,
-          userIds: selectedUserIds,
         }),
         headers: {
           "Content-Type": "application/json",
@@ -606,8 +751,38 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
           ? `${sentCount}件送信しました。${failedCount}件は送信できませんでした。`
           : `${sentCount}件のユーザに送信しました。`,
       );
+      void loadSentRuns();
     } finally {
       setSendingGeneratedMessage(false);
+    }
+  }
+
+  async function handleAutomationEnabledChange(enabled: boolean) {
+    const previousSettings = automationSettings;
+
+    setSavingAutomationSettings(true);
+    setError("");
+    setAutomationSettings((current) => (current ? { ...current, enabled } : current));
+
+    try {
+      const result = await fetchJson<AutomationSettingsResponse>("/api/message-assistant/automation-settings", {
+        body: JSON.stringify({ enabled }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "PATCH",
+      });
+
+      if (result.error || !result.data?.settings) {
+        setAutomationSettings(previousSettings);
+        setError(result.error?.message ?? "自動送信設定を更新できません。");
+        return;
+      }
+
+      setAutomationSettings(result.data.settings);
+      setGeneratedMessageStatus(enabled ? "自動送信を有効にしました。" : "自動送信を停止しました。");
+    } finally {
+      setSavingAutomationSettings(false);
     }
   }
 
@@ -720,20 +895,33 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
                     </p>
                   ) : null}
                 </div>
-                <button className="secondary account-user-info" onClick={showUserInfoView} role="menuitem" type="button">
-                  ユーザ情報
-                </button>
-                <button className="secondary account-message" onClick={showGeneratedMessageView} role="menuitem" type="button">
-                  メッセージ
-                </button>
                 <button className="secondary account-logout" onClick={() => void handleLogout()} role="menuitem" type="button">
                   ログアウト
                 </button>
               </div>
             ) : null}
           </div>
+          <div className="nav-menu" ref={navMenuRef}>
+            <button
+              aria-expanded={navMenuOpen}
+              aria-haspopup="menu"
+              aria-label="メニューを開く"
+              className={`hamburger-button ${navMenuOpen ? "active" : ""}`}
+              onClick={() => setNavMenuOpen((current) => !current)}
+              type="button"
+            >
+              <span aria-hidden="true" />
+            </button>
+            {navMenuOpen ? (
+              <div className="nav-popover" role="menu">
+                <NavMenuItems currentView={currentView} onNavigate={navigateToView} />
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
+
+      <AppTabs currentView={currentView} />
 
       {error ? (
         <section className="toolbar">
@@ -767,25 +955,104 @@ export default function ViewerApp({ appVersion }: { appVersion: string }) {
         />
       ) : null}
 
+      {currentView === "sent" ? (
+        <SentHistoryScreen
+          loading={loadingSentRuns}
+          onRefresh={() => void loadSentRuns()}
+          onSelect={setSelectedSendRun}
+          runs={sentRuns}
+          statusText={status || "送信履歴を表示します。"}
+        />
+      ) : null}
+
       {currentView === "generated-message" ? (
         <GeneratedMessageScreen
+          automationSettings={automationSettings}
           generating={generatingMessage}
           loadingUsers={loadingUsers}
           message={generatedMessage}
           location={generatedMessageLocation}
+          onAutomationEnabledChange={(enabled) => void handleAutomationEnabledChange(enabled)}
           onBack={showMessageView}
           onGenerate={() => void handleGenerateMessage()}
           onMessageChange={setGeneratedMessage}
           onOpenUsers={showUserInfoView}
           onSend={() => void handleSendGeneratedMessage()}
           selectedUsers={selectedUsers}
+          savingAutomationSettings={savingAutomationSettings}
           sending={sendingGeneratedMessage}
           statusText={generatedMessageStatus}
         />
       ) : null}
       <MessageDetailModal message={selectedMessage} onClose={closeMessageModal} />
+      <SendRunDetailModal run={selectedSendRun} onClose={() => setSelectedSendRun(null)} />
     </main>
   );
+}
+
+const VIEW_ITEMS: Array<{ label: string; view: ViewerView }> = [
+  { label: "受信履歴", view: "messages" },
+  { label: "送信履歴", view: "sent" },
+  { label: "ユーザ情報", view: "users" },
+  { label: "メッセージ送信", view: "generated-message" },
+];
+
+function AppTabs({ currentView }: { currentView: ViewerView }) {
+  return (
+    <nav aria-label="画面切り替え" className="app-tabs">
+      {VIEW_ITEMS.map((item) => (
+        <Link
+          aria-current={item.view === currentView ? "page" : undefined}
+          className={`app-tab ${item.view === currentView ? "active" : ""}`}
+          href={routeForView(item.view)}
+          key={item.view}
+        >
+          {item.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+function NavMenuItems({
+  currentView,
+  onNavigate,
+}: {
+  currentView: ViewerView;
+  onNavigate: (view: ViewerView) => void;
+}) {
+  return (
+    <>
+      {VIEW_ITEMS.map((item) => (
+        <button
+          aria-current={item.view === currentView ? "page" : undefined}
+          className={`secondary nav-menu-item ${item.view === currentView ? "active" : ""}`}
+          key={item.view}
+          onClick={() => onNavigate(item.view)}
+          role="menuitem"
+          type="button"
+        >
+          {item.label}
+        </button>
+      ))}
+    </>
+  );
+}
+
+function routeForView(view: ViewerView) {
+  if (view === "sent") {
+    return "/sent";
+  }
+
+  if (view === "users") {
+    return "/users";
+  }
+
+  if (view === "generated-message") {
+    return "/send";
+  }
+
+  return "/";
 }
 
 function UserInfoScreen({
@@ -843,8 +1110,12 @@ function UserInfoScreen({
                   <dd>{user.userId}</dd>
                 </div>
                 <div>
-                  <dt>取得日時</dt>
-                  <dd>{formatTime(user.fetchedAt)}</dd>
+                  <dt>初回保存日時</dt>
+                  <dd>{formatTime(user.firstSeenAt)}</dd>
+                </div>
+                <div>
+                  <dt>最終確認日時</dt>
+                  <dd>{formatTime(user.lastSeenAt)}</dd>
                 </div>
               </dl>
             </article>
@@ -859,31 +1130,85 @@ function UserInfoScreen({
   );
 }
 
+function SentHistoryScreen({
+  loading,
+  onRefresh,
+  onSelect,
+  runs,
+  statusText,
+}: {
+  loading: boolean;
+  onRefresh: () => void;
+  onSelect: (run: SendRunView) => void;
+  runs: SendRunView[];
+  statusText: string;
+}) {
+  return (
+    <section className="sent-history-screen">
+      <div className="sent-history-header">
+        <div>
+          <h2>送信履歴</h2>
+          <p className="status-text">{loading ? "送信履歴を更新中です。" : statusText}</p>
+        </div>
+        <button onClick={onRefresh} type="button" disabled={loading}>
+          更新
+        </button>
+      </div>
+
+      {runs.length ? (
+        <div className="sent-run-list">
+          {runs.map((run) => (
+            <button className="sent-run-row" key={run.runId} onClick={() => onSelect(run)} type="button">
+              <span className="message-meta">
+                <strong>{formatSendRunMode(run.mode)}</strong>
+                <span>{formatTime(run.sentAt)}</span>
+                <span>{formatSendRunStatus(run.status)}</span>
+                <span>対象 {run.targetCount}</span>
+                <span>成功 {run.successCount}</span>
+                <span>失敗 {run.failedCount}</span>
+              </span>
+              <span className="message-text">{run.messageText || "本文は保存されていません。"}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="panel empty-message-panel">送信履歴はありません。</div>
+      )}
+    </section>
+  );
+}
+
 
 function GeneratedMessageScreen({
+  automationSettings,
   generating,
   loadingUsers,
   location,
   message,
+  onAutomationEnabledChange,
   onBack,
   onGenerate,
   onMessageChange,
   onOpenUsers,
   onSend,
   selectedUsers,
+  savingAutomationSettings,
   sending,
   statusText,
 }: {
+  automationSettings: AutomationSettingsView | null;
   generating: boolean;
   loadingUsers: boolean;
   location: string;
   message: string;
+  onAutomationEnabledChange: (enabled: boolean) => void;
   onBack: () => void;
   onGenerate: () => void;
   onMessageChange: (message: string) => void;
   onOpenUsers: () => void;
   onSend: () => void;
   selectedUsers: UserInfoView[];
+  savingAutomationSettings: boolean;
   sending: boolean;
   statusText: string;
 }) {
@@ -940,6 +1265,48 @@ function GeneratedMessageScreen({
           />
         </label>
       </div>
+
+      <section className="panel automation-settings-panel">
+        <div className="automation-settings-header">
+          <div>
+            <h3>自動送信設定</h3>
+            <p className="status-text">毎朝の自動送信は選択中のユーザに送信されます。</p>
+          </div>
+          <label className="notification-toggle automation-toggle">
+            <span className="notification-toggle-copy">
+              <span className="notification-toggle-title">自動送信</span>
+              <span className="notification-toggle-state">
+                {automationSettings?.enabled ? "オン" : "オフ"}
+              </span>
+            </span>
+            <span className="toggle-switch">
+              <input
+                aria-label="自動送信"
+                checked={Boolean(automationSettings?.enabled)}
+                disabled={!automationSettings || savingAutomationSettings}
+                onChange={(event) => onAutomationEnabledChange(event.target.checked)}
+                role="switch"
+                type="checkbox"
+              />
+              <span className="toggle-slider" />
+            </span>
+          </label>
+        </div>
+        <dl className="automation-settings-grid">
+          <div>
+            <dt>送信時刻</dt>
+            <dd>{automationSettings?.sendTimeJst ?? "07:00"}</dd>
+          </div>
+          <div>
+            <dt>タイムゾーン</dt>
+            <dd>日本時間</dd>
+          </div>
+          <div>
+            <dt>送信履歴保存期間</dt>
+            <dd>{automationSettings?.historyRetentionDays ?? 180}日</dd>
+          </div>
+        </dl>
+      </section>
     </section>
   );
 }
@@ -1030,12 +1397,93 @@ function MessageDetailModal({ message, onClose }: { message: MessageView | null;
   );
 }
 
+function SendRunDetailModal({ run, onClose }: { run: SendRunView | null; onClose: () => void }) {
+  if (!run) {
+    return null;
+  }
+
+  const failedTargets = run.targets.filter((target) => target.status === "failed");
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div
+        aria-label="送信履歴詳細"
+        aria-modal="true"
+        className="message-modal send-run-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <button aria-label="閉じる" className="secondary modal-close-button" onClick={onClose} type="button">
+          ×
+        </button>
+        <dl className="send-run-detail-meta">
+          <div>
+            <dt>送信種別</dt>
+            <dd>{formatSendRunMode(run.mode)}</dd>
+          </div>
+          <div>
+            <dt>送信日時</dt>
+            <dd>{formatTime(run.sentAt)}</dd>
+          </div>
+          <div>
+            <dt>ステータス</dt>
+            <dd>{formatSendRunStatus(run.status)}</dd>
+          </div>
+          <div>
+            <dt>結果</dt>
+            <dd>
+              対象 {run.targetCount} / 成功 {run.successCount} / 失敗 {run.failedCount}
+            </dd>
+          </div>
+        </dl>
+        <div className="send-run-detail-section">
+          <h3>本文</h3>
+          <p className="message-modal-text">{run.messageText || "本文は保存されていません。"}</p>
+        </div>
+        <div className="send-run-detail-section">
+          <h3>失敗ユーザ</h3>
+          {failedTargets.length ? (
+            <div className="failed-target-list">
+              {failedTargets.map((target) => (
+                <div className="failed-target-row" key={target.userId}>
+                  <strong>{target.userName}</strong>
+                  <span>{target.userId}</span>
+                  <span>{target.errorCode ?? "送信失敗"}</span>
+                  {typeof target.httpStatus === "number" ? <span>HTTP {target.httpStatus}</span> : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="status-text">失敗ユーザはありません。</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function sourceLabel(message: MessageView) {
   if (message.sourceType === "group") {
     return message.sourceGroupName || "ユーザグループ";
   }
 
   return "個別トーク";
+}
+
+function formatSendRunMode(mode: SendRunView["mode"]) {
+  return mode === "auto" ? "自動" : "手動";
+}
+
+function formatSendRunStatus(status: SendRunView["status"]) {
+  if (status === "success") {
+    return "成功";
+  }
+
+  if (status === "partial_failed") {
+    return "一部失敗";
+  }
+
+  return "失敗";
 }
 
 function formatTime(value: string) {

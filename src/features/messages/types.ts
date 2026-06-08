@@ -11,10 +11,24 @@ export type LineAccountView = {
 };
 
 export type UserInfoView = {
+  broadcastSelected: boolean;
   fetchedAt: string;
+  firstSeenAt: string;
+  lastMessageAt: string;
+  lastSeenAt: string;
   lineAccountId: string;
   userId: string;
   userName: string;
+};
+
+export type AutomationSettingsView = {
+  enabled: boolean;
+  historyRetentionDays: number;
+  lineAccountId: string;
+  scheduleMode: "fixed_deploy";
+  sendTimeJst: string;
+  timeZone: "Asia/Tokyo";
+  updatedAt: null | string;
 };
 
 export type MessageView = {
@@ -30,6 +44,39 @@ export type MessageView = {
   sourceUserId: null | string;
   senderDisplayName: string;
   text: string;
+};
+
+export type SendRunMode = "auto" | "manual";
+
+export type SendRunStatus = "failed" | "partial_failed" | "success";
+
+export type SendRunTargetView = {
+  errorCode?: string;
+  httpStatus?: number;
+  status: "failed" | "success";
+  userId: string;
+  userName: string;
+};
+
+export type SendRunView = {
+  createdAt: null | string;
+  expiresAt: string;
+  failedCount: number;
+  finishedAt: null | string;
+  historyRetentionDays: number;
+  lineAccountId: string;
+  messageText: string;
+  mode: SendRunMode;
+  requestId: string;
+  runId: string;
+  sentAt: string;
+  startedAt: string;
+  status: SendRunStatus;
+  successCount: number;
+  targetCount: number;
+  targets: SendRunTargetView[];
+  trigger: "cron" | "viewer";
+  updatedAt: null | string;
 };
 
 export type CronRunView = {
