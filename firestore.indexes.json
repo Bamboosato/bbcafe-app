@@ -39,6 +39,14 @@
         { "fieldPath": "lineAccountId", "order": "ASCENDING" },
         { "fieldPath": "lineMessageId", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "sendRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "mode", "order": "ASCENDING" },
+        { "fieldPath": "sentAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

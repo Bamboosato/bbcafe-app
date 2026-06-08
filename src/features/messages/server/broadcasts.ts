@@ -20,6 +20,25 @@ export const JAPAN_TIME_ZONE = "Asia/Tokyo";
 const MAX_BROADCAST_USERS = 1000;
 const MAX_SEND_RUNS = 200;
 const WRITE_BATCH_LIMIT = 450;
+const SEND_RUN_SUMMARY_FIELDS = [
+  "createdAt",
+  "expiresAt",
+  "failedCount",
+  "finishedAt",
+  "historyRetentionDays",
+  "lineAccountId",
+  "messageText",
+  "mode",
+  "requestId",
+  "runId",
+  "sentAt",
+  "startedAt",
+  "status",
+  "successCount",
+  "targetCount",
+  "trigger",
+  "updatedAt",
+];
 
 type UpsertBroadcastUserInput = {
   firstSeenAt?: Date;
@@ -233,17 +252,22 @@ export async function getDailyBroadcastSettings(lineAccountId: string): Promise<
 
 export async function updateDailyBroadcastSettings({
   enabled,
+  historyRetentionDays,
   lineAccountId,
 }: {
-  enabled: boolean;
+  enabled?: boolean;
+  historyRetentionDays?: number;
   lineAccountId: string;
 }) {
   const current = await getDailyBroadcastSettings(lineAccountId);
+  const nextHistoryRetentionDays = normalizeHistoryRetentionDays(
+    historyRetentionDays ?? current.historyRetentionDays,
+  );
 
   await automationSettingsRef(lineAccountId).set(
     {
-      enabled,
-      historyRetentionDays: current.historyRetentionDays,
+      enabled: typeof enabled === "boolean" ? enabled : current.enabled,
+      historyRetentionDays: nextHistoryRetentionDays,
       lineAccountId,
       scheduleMode: "fixed_deploy",
       sendTimeJst: FIXED_DAILY_SEND_TIME_JST,
@@ -360,13 +384,47 @@ function isAlreadyExistsError(error: unknown) {
   return error instanceof Error && error.message.toLowerCase().includes("already exists");
 }
 
+function isMissingIndexError(error: unknown) {
+  return error instanceof Error && error.message.includes("FAILED_PRECONDITION");
+}
+
 export async function listSendRuns(lineAccountId: string, limit = 100): Promise<SendRunView[]> {
   const snapshot = await sendRunsCollection(lineAccountId)
     .orderBy("sentAt", "desc")
     .limit(normalizeSendRunLimit(limit))
+    .select(...SEND_RUN_SUMMARY_FIELDS)
     .get();
 
   return snapshot.docs.map((doc) => toSendRunView(lineAccountId, doc.id, doc.data()));
+}
+
+export async function listAutoSendRuns(lineAccountId: string, limit = 20): Promise<SendRunView[]> {
+  const normalizedLimit = normalizeSendRunLimit(limit);
+
+  try {
+    const snapshot = await sendRunsCollection(lineAccountId)
+      .where("mode", "==", "auto")
+      .orderBy("sentAt", "desc")
+      .limit(normalizedLimit)
+      .select(...SEND_RUN_SUMMARY_FIELDS)
+      .get();
+
+    return snapshot.docs.map((doc) => toSendRunView(lineAccountId, doc.id, doc.data()));
+  } catch (error) {
+    if (!isMissingIndexError(error)) {
+      throw error;
+    }
+
+    const snapshot = await sendRunsCollection(lineAccountId)
+      .where("mode", "==", "auto")
+      .limit(normalizedLimit)
+      .select(...SEND_RUN_SUMMARY_FIELDS)
+      .get();
+
+    return snapshot.docs
+      .map((doc) => toSendRunView(lineAccountId, doc.id, doc.data()))
+      .sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.runId.localeCompare(left.runId));
+  }
 }
 
 export async function deleteExpiredSendRuns(lineAccountId: string, now = new Date()) {

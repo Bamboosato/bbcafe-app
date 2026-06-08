@@ -11,12 +11,16 @@ import {
 } from "@/features/messages/messageFilter";
 import type {
   AutomationSettingsView,
+  CommonSettingsView,
+  CronHistoryItemView,
   MessageView,
   SendRunView,
   UserInfoView,
 } from "@/features/messages/types";
 
-type ViewerView = "generated-message" | "messages" | "sent" | "users";
+type ViewerRole = "admin" | "viewer";
+
+type ViewerView = "cron-runs" | "generated-message" | "messages" | "sent" | "settings" | "users";
 
 type ApiEnvelope<T> = {
   data?: T;
@@ -27,6 +31,7 @@ type ApiEnvelope<T> = {
 
 type SessionResponse = {
   authenticated: boolean;
+  role: null | ViewerRole;
   viewerSharedId: null | string;
 };
 
@@ -50,8 +55,20 @@ type SentRunsResponse = {
   runs: SendRunView[];
 };
 
+type SentRunResponse = {
+  run: SendRunView;
+};
+
 type AutomationSettingsResponse = {
   settings: AutomationSettingsView;
+};
+
+type CommonSettingsResponse = {
+  settings: CommonSettingsView;
+};
+
+type CronHistoryResponse = {
+  items: CronHistoryItemView[];
 };
 
 type AppVersionResponse = {
@@ -85,11 +102,15 @@ export default function ViewerApp({
   const router = useRouter();
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [role, setRole] = useState<ViewerRole | null>(null);
   const [sharedId, setSharedId] = useState("bbcafe");
   const [password, setPassword] = useState("");
   const [messages, setMessages] = useState<MessageView[]>([]);
   const [sentRuns, setSentRuns] = useState<SendRunView[]>([]);
   const [users, setUsers] = useState<UserInfoView[]>([]);
+  const [commonSettings, setCommonSettings] = useState<CommonSettingsView | null>(null);
+  const [commonSettingsPassword, setCommonSettingsPassword] = useState("");
+  const [cronHistoryItems, setCronHistoryItems] = useState<CronHistoryItemView[]>([]);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
   const [selectedSendRun, setSelectedSendRun] = useState<SendRunView | null>(null);
@@ -110,6 +131,9 @@ export default function ViewerApp({
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [loadingSentRuns, setLoadingSentRuns] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingCommonSettings, setLoadingCommonSettings] = useState(false);
+  const [loadingCronHistory, setLoadingCronHistory] = useState(false);
+  const [savingCommonSettings, setSavingCommonSettings] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -118,7 +142,10 @@ export default function ViewerApp({
   const loadingMessagesRef = useRef(false);
   const loadingSentRunsRef = useRef(false);
   const loadingUsersRef = useRef(false);
+  const loadingCommonSettingsRef = useRef(false);
+  const loadingCronHistoryRef = useRef(false);
 
+  const isAdmin = role === "admin";
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
   const selectedUsers = useMemo(
@@ -127,7 +154,8 @@ export default function ViewerApp({
   );
   const selectedUserIds = useMemo(() => selectedUsers.map((user) => user.userId), [selectedUsers]);
   const currentView = initialView;
-  const messageListStatus = loadingMessages ? "更新中です。" : status || "60秒ごとに自動更新します。";
+  const viewItems = useMemo(() => getViewItems(isAdmin), [isAdmin]);
+  const messageListStatus = loadingMessages ? "更新中です。" : status || "更新ボタンで最新の受信履歴を取得します。";
 
   const checkForAppUpdate = useCallback(async () => {
     const result = await fetchJson<AppVersionResponse>("/api/app-version", { cache: "no-store" });
@@ -222,7 +250,7 @@ export default function ViewerApp({
       setSelectedSendRun((current) =>
         current && !nextRuns.some((run) => run.runId === current.runId) ? null : current,
       );
-      setStatus(`送信履歴の最終更新: ${formatTime(new Date().toISOString())}`);
+      setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
     } finally {
       loadingSentRunsRef.current = false;
       setLoadingSentRuns(false);
@@ -244,7 +272,72 @@ export default function ViewerApp({
     setAutomationSettings(result.data?.settings ?? null);
   }, []);
 
+  const loadCommonSettings = useCallback(async () => {
+    if (loadingCommonSettingsRef.current) {
+      return;
+    }
+
+    loadingCommonSettingsRef.current = true;
+    setLoadingCommonSettings(true);
+    setError("");
+
+    try {
+      const result = await fetchJson<CommonSettingsResponse>("/api/admin/common-settings", {
+        cache: "no-store",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      const nextSettings = result.data?.settings ?? null;
+      setCommonSettings(nextSettings);
+
+      if (nextSettings?.viewerSharedId) {
+        setSharedId(nextSettings.viewerSharedId);
+      }
+
+      setStatus(`共通設定の最終更新: ${formatTime(new Date().toISOString())}`);
+    } finally {
+      loadingCommonSettingsRef.current = false;
+      setLoadingCommonSettings(false);
+    }
+  }, []);
+
+  const loadCronHistory = useCallback(async () => {
+    if (loadingCronHistoryRef.current) {
+      return;
+    }
+
+    loadingCronHistoryRef.current = true;
+    setLoadingCronHistory(true);
+    setError("");
+
+    try {
+      const result = await fetchJson<CronHistoryResponse>("/api/admin/cron-history?limit=20", {
+        cache: "no-store",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      setCronHistoryItems(result.data?.items ?? []);
+      setStatus(`Cron履歴の最終更新: ${formatTime(new Date().toISOString())}`);
+    } finally {
+      loadingCronHistoryRef.current = false;
+      setLoadingCronHistory(false);
+    }
+  }, []);
+
   function navigateToView(view: ViewerView) {
+    if (isAdminOnlyView(view) && !isAdmin) {
+      router.push("/");
+      return;
+    }
+
     setAccountMenuOpen(false);
     setNavMenuOpen(false);
     setSelectedMessage(null);
@@ -265,36 +358,35 @@ export default function ViewerApp({
   }
 
   const refreshVisibleMessages = useCallback(() => {
-    if (authenticatedRef.current) {
+    if (authenticatedRef.current && currentView === "messages") {
       void loadMessages();
     }
-  }, [loadMessages]);
+  }, [currentView, loadMessages]);
 
   useEffect(() => {
     let active = true;
 
-    fetchJson<SessionResponse>("/api/viewer/session").then((result) => {
+    fetchJson<SessionResponse>("/api/auth/session").then((result) => {
       if (!active) {
         return;
       }
 
       const nextAuthenticated = Boolean(result.data?.authenticated);
+      const nextRole = result.data?.role ?? null;
       setAuthenticated(nextAuthenticated);
+      setRole(nextRole);
       setCheckingSession(false);
 
       if (result.data?.viewerSharedId) {
         setSharedId(result.data.viewerSharedId);
       }
 
-      if (nextAuthenticated) {
-        void loadMessages();
-      }
     });
 
     return () => {
       active = false;
     };
-  }, [loadMessages]);
+  }, []);
 
   useEffect(() => {
     if (!authenticated) {
@@ -302,6 +394,15 @@ export default function ViewerApp({
     }
 
     const timer = window.setTimeout(() => {
+      if (isAdminOnlyView(currentView) && !isAdmin) {
+        router.replace("/");
+        return;
+      }
+
+      if (currentView === "messages") {
+        void loadMessages();
+      }
+
       if (currentView === "users") {
         void loadUsers();
       }
@@ -316,38 +417,44 @@ export default function ViewerApp({
       if (currentView === "sent") {
         void loadSentRuns();
       }
+
+      if (currentView === "settings") {
+        void loadCommonSettings();
+      }
+
+      if (currentView === "cron-runs") {
+        void loadCronHistory();
+      }
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [authenticated, currentView, loadAutomationSettings, loadSentRuns, loadUsers, users.length]);
+  }, [
+    authenticated,
+    currentView,
+    isAdmin,
+    loadAutomationSettings,
+    loadCommonSettings,
+    loadCronHistory,
+    loadMessages,
+    loadSentRuns,
+    loadUsers,
+    router,
+    users.length,
+  ]);
 
   useEffect(() => {
     authenticatedRef.current = authenticated;
   }, [authenticated]);
 
   useEffect(() => {
-    if (!authenticated) {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      void loadMessages();
-    }, 60000);
-
-    return () => window.clearInterval(timer);
-  }, [authenticated, loadMessages]);
-
-  useEffect(() => {
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
         void checkForAppUpdate();
-        refreshVisibleMessages();
       }
     }
 
     function handleFocus() {
       void checkForAppUpdate();
-      refreshVisibleMessages();
     }
 
     window.addEventListener("focus", handleFocus);
@@ -357,7 +464,7 @@ export default function ViewerApp({
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [checkForAppUpdate, refreshVisibleMessages]);
+  }, [checkForAppUpdate]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) {
@@ -611,8 +718,8 @@ export default function ViewerApp({
     setError("");
     setStatus("");
 
-    const result = await fetchJson<SessionResponse>("/api/viewer/login", {
-      body: JSON.stringify({ password, sharedId }),
+    const result = await fetchJson<SessionResponse>("/api/auth/login", {
+      body: JSON.stringify({ id: sharedId, password }),
       headers: {
         "Content-Type": "application/json",
       },
@@ -629,16 +736,8 @@ export default function ViewerApp({
     }
 
     setPassword("");
+    setRole(result.data.role);
     setAuthenticated(true);
-    if (currentView === "messages") {
-      await loadMessages();
-    } else if (currentView === "users") {
-      await loadUsers();
-    } else if (currentView === "sent") {
-      await loadSentRuns();
-    } else {
-      await Promise.all([loadUsers(), loadAutomationSettings()]);
-    }
   }
 
   async function handleLogout() {
@@ -646,14 +745,18 @@ export default function ViewerApp({
       await disablePushNotifications({ silent: true }).catch(() => undefined);
     }
 
-    await fetchJson("/api/viewer/logout", { method: "POST" });
+    await fetchJson("/api/auth/logout", { method: "POST" });
     setAuthenticated(false);
+    setRole(null);
     setAccountMenuOpen(false);
     setNavMenuOpen(false);
     setMessageFilter("all");
     setMessages([]);
     setSentRuns([]);
     setUsers([]);
+    setCommonSettings(null);
+    setCommonSettingsPassword("");
+    setCronHistoryItems([]);
     setSelectedSendRun(null);
     setAutomationSettings(null);
     setGeneratedMessage("");
@@ -786,6 +889,55 @@ export default function ViewerApp({
     }
   }
 
+  function handleCommonSettingsChange<K extends keyof CommonSettingsView>(
+    key: K,
+    value: CommonSettingsView[K],
+  ) {
+    setCommonSettings((current) => (current ? { ...current, [key]: value } : current));
+  }
+
+  async function handleCommonSettingsSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!commonSettings) {
+      return;
+    }
+
+    setSavingCommonSettings(true);
+    setError("");
+
+    try {
+      const result = await fetchJson<CommonSettingsResponse>("/api/admin/common-settings", {
+        body: JSON.stringify({
+          displayName: commonSettings.displayName,
+          receivedRetentionDays: commonSettings.receivedRetentionDays,
+          sentRetentionDays: commonSettings.sentRetentionDays,
+          viewerPassword: commonSettingsPassword.trim() ? commonSettingsPassword : undefined,
+          viewerSharedId: commonSettings.viewerSharedId,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "PATCH",
+      });
+
+      if (result.error || !result.data?.settings) {
+        setError(result.error?.message ?? "共通設定を更新できません。");
+        return;
+      }
+
+      setCommonSettings(result.data.settings);
+      setCommonSettingsPassword("");
+      setSharedId(result.data.settings.viewerSharedId);
+      setAutomationSettings((current) =>
+        current ? { ...current, historyRetentionDays: result.data?.settings.sentRetentionDays ?? current.historyRetentionDays } : current,
+      );
+      setStatus("共通設定を更新しました。");
+    } finally {
+      setSavingCommonSettings(false);
+    }
+  }
+
   async function handleSelect(messageId: string) {
     setError("");
     const result = await fetchJson<MessageResponse>(`/api/messages/${encodeURIComponent(messageId)}`);
@@ -796,6 +948,20 @@ export default function ViewerApp({
     }
 
     setSelectedMessage(result.data?.message ?? null);
+  }
+
+  async function handleSelectSendRun(run: SendRunView) {
+    setError("");
+    const result = await fetchJson<SentRunResponse>(`/api/sent-messages/${encodeURIComponent(run.runId)}`, {
+      cache: "no-store",
+    });
+
+    if (result.error || !result.data?.run) {
+      setError(result.error?.message ?? "送信履歴を取得できません。");
+      return;
+    }
+
+    setSelectedSendRun(result.data.run);
   }
 
   function closeMessageModal() {
@@ -816,11 +982,11 @@ export default function ViewerApp({
         <section className="panel login-panel">
           <div className="app-title">
             <h1>BB Cafe Messages</h1>
-            <p>共有IDとパスワードで閲覧します。</p>
+            <p>IDとパスワードでログインします。</p>
           </div>
           <form className="form-stack" onSubmit={handleLogin}>
             <label>
-              共有ID
+              ID
               <input
                 autoComplete="username"
                 onChange={(event) => setSharedId(event.target.value)}
@@ -869,6 +1035,10 @@ export default function ViewerApp({
                   <span>共有ID</span>
                   <strong>{sharedId}</strong>
                 </div>
+                <div className="account-summary">
+                  <span>ログイン種別</span>
+                  <strong>{isAdmin ? "管理者" : "閲覧者"}</strong>
+                </div>
                 <div className="notification-setting" role="none">
                   <label className="notification-toggle">
                     <span className="notification-toggle-copy">
@@ -914,14 +1084,14 @@ export default function ViewerApp({
             </button>
             {navMenuOpen ? (
               <div className="nav-popover" role="menu">
-                <NavMenuItems currentView={currentView} onNavigate={navigateToView} />
+                <NavMenuItems currentView={currentView} items={viewItems} onNavigate={navigateToView} />
               </div>
             ) : null}
           </div>
         </div>
       </header>
 
-      <AppTabs currentView={currentView} />
+      <AppTabs currentView={currentView} items={viewItems} />
 
       {error ? (
         <section className="toolbar">
@@ -933,8 +1103,10 @@ export default function ViewerApp({
         <section className="message-layout">
           <MessageList
             filter={messageFilter}
+            loading={loadingMessages}
             messages={filteredMessages}
             onFilterChange={handleFilterChange}
+            onRefresh={() => void loadMessages()}
             onSelect={handleSelect}
             selectedId={selectedId}
             statusText={messageListStatus}
@@ -959,7 +1131,7 @@ export default function ViewerApp({
         <SentHistoryScreen
           loading={loadingSentRuns}
           onRefresh={() => void loadSentRuns()}
-          onSelect={setSelectedSendRun}
+          onSelect={(run) => void handleSelectSendRun(run)}
           runs={sentRuns}
           statusText={status || "送信履歴を表示します。"}
         />
@@ -984,23 +1156,59 @@ export default function ViewerApp({
           statusText={generatedMessageStatus}
         />
       ) : null}
+      {currentView === "settings" && isAdmin ? (
+        <CommonSettingsScreen
+          loading={loadingCommonSettings}
+          onChange={handleCommonSettingsChange}
+          onPasswordChange={setCommonSettingsPassword}
+          onSubmit={(event) => void handleCommonSettingsSubmit(event)}
+          password={commonSettingsPassword}
+          saving={savingCommonSettings}
+          settings={commonSettings}
+          statusText={status || "共通設定を表示します。"}
+        />
+      ) : null}
+      {currentView === "cron-runs" && isAdmin ? (
+        <CronHistoryScreen
+          items={cronHistoryItems}
+          loading={loadingCronHistory}
+          onRefresh={() => void loadCronHistory()}
+          statusText={status || "Cron履歴を表示します。"}
+        />
+      ) : null}
       <MessageDetailModal message={selectedMessage} onClose={closeMessageModal} />
       <SendRunDetailModal run={selectedSendRun} onClose={() => setSelectedSendRun(null)} />
     </main>
   );
 }
 
-const VIEW_ITEMS: Array<{ label: string; view: ViewerView }> = [
+const VIEW_ITEMS: Array<{ adminOnly?: boolean; label: string; view: ViewerView }> = [
   { label: "受信履歴", view: "messages" },
   { label: "送信履歴", view: "sent" },
   { label: "ユーザ情報", view: "users" },
   { label: "メッセージ送信", view: "generated-message" },
+  { adminOnly: true, label: "共通設定", view: "settings" },
+  { adminOnly: true, label: "Cron履歴", view: "cron-runs" },
 ];
 
-function AppTabs({ currentView }: { currentView: ViewerView }) {
+function getViewItems(isAdmin: boolean) {
+  return VIEW_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+}
+
+function isAdminOnlyView(view: ViewerView) {
+  return VIEW_ITEMS.some((item) => item.view === view && item.adminOnly);
+}
+
+function AppTabs({
+  currentView,
+  items,
+}: {
+  currentView: ViewerView;
+  items: typeof VIEW_ITEMS;
+}) {
   return (
     <nav aria-label="画面切り替え" className="app-tabs">
-      {VIEW_ITEMS.map((item) => (
+      {items.map((item) => (
         <Link
           aria-current={item.view === currentView ? "page" : undefined}
           className={`app-tab ${item.view === currentView ? "active" : ""}`}
@@ -1016,14 +1224,16 @@ function AppTabs({ currentView }: { currentView: ViewerView }) {
 
 function NavMenuItems({
   currentView,
+  items,
   onNavigate,
 }: {
   currentView: ViewerView;
+  items: typeof VIEW_ITEMS;
   onNavigate: (view: ViewerView) => void;
 }) {
   return (
     <>
-      {VIEW_ITEMS.map((item) => (
+      {items.map((item) => (
         <button
           aria-current={item.view === currentView ? "page" : undefined}
           className={`secondary nav-menu-item ${item.view === currentView ? "active" : ""}`}
@@ -1040,6 +1250,14 @@ function NavMenuItems({
 }
 
 function routeForView(view: ViewerView) {
+  if (view === "settings") {
+    return "/settings";
+  }
+
+  if (view === "cron-runs") {
+    return "/cron-runs";
+  }
+
   if (view === "sent") {
     return "/sent";
   }
@@ -1053,6 +1271,139 @@ function routeForView(view: ViewerView) {
   }
 
   return "/";
+}
+
+function CommonSettingsScreen({
+  loading,
+  onChange,
+  onPasswordChange,
+  onSubmit,
+  password,
+  saving,
+  settings,
+  statusText,
+}: {
+  loading: boolean;
+  onChange: <K extends keyof CommonSettingsView>(key: K, value: CommonSettingsView[K]) => void;
+  onPasswordChange: (password: string) => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  password: string;
+  saving: boolean;
+  settings: CommonSettingsView | null;
+  statusText: string;
+}) {
+  return (
+    <section className="settings-screen">
+      <div className="settings-header">
+        <div>
+          <h2>共通設定</h2>
+          <p className="status-text">{loading ? "共通設定を更新中です。" : statusText}</p>
+        </div>
+      </div>
+
+      {settings ? (
+        <section className="panel">
+          <form className="settings-grid" onSubmit={onSubmit}>
+            <label className="full">
+              LINE表示名
+              <input
+                onChange={(event) => onChange("displayName", event.target.value)}
+                value={settings.displayName}
+              />
+            </label>
+            <label>
+              保存期間（受信）
+              <input
+                min={1}
+                onChange={(event) => onChange("receivedRetentionDays", Number(event.target.value))}
+                type="number"
+                value={settings.receivedRetentionDays}
+              />
+            </label>
+            <label>
+              保存期間（送信）
+              <input
+                min={1}
+                onChange={(event) => onChange("sentRetentionDays", Number(event.target.value))}
+                type="number"
+                value={settings.sentRetentionDays}
+              />
+            </label>
+            <label>
+              共有ID
+              <input
+                autoComplete="username"
+                onChange={(event) => onChange("viewerSharedId", event.target.value)}
+                value={settings.viewerSharedId}
+              />
+            </label>
+            <label>
+              共有パスワード変更
+              <input
+                autoComplete="new-password"
+                onChange={(event) => onPasswordChange(event.target.value)}
+                placeholder="変更する場合のみ入力"
+                type="password"
+                value={password}
+              />
+            </label>
+            <div className="full">
+              <button disabled={saving} type="submit">
+                {saving ? "保存中..." : "設定を保存"}
+              </button>
+            </div>
+          </form>
+        </section>
+      ) : (
+        <div className="panel empty-message-panel">
+          {loading ? "共通設定を読み込んでいます。" : "共通設定を表示できません。"}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CronHistoryScreen({
+  items,
+  loading,
+  onRefresh,
+  statusText,
+}: {
+  items: CronHistoryItemView[];
+  loading: boolean;
+  onRefresh: () => void;
+  statusText: string;
+}) {
+  return (
+    <section className="cron-history-screen">
+      <div className="cron-history-header">
+        <div>
+          <h2>Cron履歴</h2>
+          <p className="status-text">{loading ? "Cron履歴を更新中です。" : statusText}</p>
+        </div>
+        <button onClick={onRefresh} type="button" disabled={loading}>
+          更新
+        </button>
+      </div>
+
+      {items.length ? (
+        <div className="sent-run-list">
+          {items.map((item) => (
+            <div className="sent-run-row" key={`${item.kind}:${item.id}`}>
+              <span className="message-meta">
+                <strong>{formatCronHistoryKind(item.kind)}</strong>
+                <span>{formatTime(item.startedAt)}</span>
+                <span>{formatCronHistoryStatus(item.status)}</span>
+              </span>
+              <span className="message-text">{item.summary}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="panel empty-message-panel">Cron履歴はありません。</div>
+      )}
+    </section>
+  );
 }
 
 function UserInfoScreen({
@@ -1148,11 +1499,13 @@ function SentHistoryScreen({
       <div className="sent-history-header">
         <div>
           <h2>送信履歴</h2>
-          <p className="status-text">{loading ? "送信履歴を更新中です。" : statusText}</p>
         </div>
-        <button onClick={onRefresh} type="button" disabled={loading}>
-          更新
-        </button>
+        <div className="sent-history-actions">
+          <p className="status-text">{loading ? "送信履歴を更新中です。" : statusText}</p>
+          <button onClick={onRefresh} type="button" disabled={loading}>
+            更新
+          </button>
+        </div>
       </div>
 
       {runs.length ? (
@@ -1313,16 +1666,20 @@ function GeneratedMessageScreen({
 
 function MessageList({
   filter,
+  loading,
   messages,
   onFilterChange,
+  onRefresh,
   onSelect,
   selectedId,
   statusText,
   totalCount,
 }: {
   filter: MessageFilter;
+  loading: boolean;
   messages: MessageView[];
   onFilterChange: (filter: MessageFilter) => void;
+  onRefresh: () => void;
   onSelect: (messageId: string) => void;
   selectedId: null | string;
   statusText: string;
@@ -1344,7 +1701,12 @@ function MessageList({
             </button>
           ))}
         </div>
-        <p className="message-list-status status-text">{statusText}</p>
+        <div className="message-list-actions">
+          <p className="message-list-status status-text">{statusText}</p>
+          <button disabled={loading} onClick={onRefresh} type="button">
+            更新
+          </button>
+        </div>
       </div>
 
       {messages.length ? (
@@ -1481,6 +1843,30 @@ function formatSendRunStatus(status: SendRunView["status"]) {
 
   if (status === "partial_failed") {
     return "一部失敗";
+  }
+
+  return "失敗";
+}
+
+function formatCronHistoryKind(kind: CronHistoryItemView["kind"]) {
+  if (kind === "delete_expired_messages") {
+    return "自動削除";
+  }
+
+  return "自動送信";
+}
+
+function formatCronHistoryStatus(status: string) {
+  if (status === "success") {
+    return "成功";
+  }
+
+  if (status === "partial_failed") {
+    return "一部失敗";
+  }
+
+  if (status === "skipped") {
+    return "スキップ";
   }
 
   return "失敗";
