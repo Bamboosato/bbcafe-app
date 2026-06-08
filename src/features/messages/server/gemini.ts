@@ -1,11 +1,14 @@
 import { fetchWithRateLimitRetry } from "./rateLimitRetry";
+import { getNagoyaWeatherInfo } from "./weather";
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const DEFAULT_MESSAGE_LOCATION = "日本";
-const DAILY_GREETING_MAX_OUTPUT_TOKENS = 1000;
+const DEFAULT_MESSAGE_LOCATION = "名古屋市";
+const DAILY_GREETING_MAX_OUTPUT_TOKENS = 300;
 const DAILY_GREETING_TIME_ZONE = "Asia/Tokyo";
 const TIME_OF_DAY_GREETINGS = ["お早うございます。", "こんにちは。", "こんばんは。"] as const;
 const UNKNOWN_GENERATION_ERROR_SUMMARY = "メッセージ生成APIで不明なエラーが発生しました。";
+const HEATSTROKE_ALERT_INFO =
+  "【熱中症警戒】非常に暑くなる季節です。必ずエアコン使用と水分補給を促してください。";
 
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
@@ -27,6 +30,9 @@ type GeminiErrorResponse = {
 type GenerateContentConfig = {
   maxOutputTokens: number;
   temperature: number;
+  thinkingConfig: {
+    thinkingBudget: number;
+  };
 };
 
 class GeminiMessageGenerationError extends Error {
@@ -43,9 +49,11 @@ class GeminiMessageGenerationError extends Error {
 export async function generateDailyGreetingMessage({
   location = process.env.MESSAGE_LOCATION?.trim() || DEFAULT_MESSAGE_LOCATION,
   today = new Date(),
+  weatherInfo,
 }: {
   location?: string;
   today?: Date;
+  weatherInfo?: string;
 } = {}) {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
 
@@ -58,10 +66,14 @@ export async function generateDailyGreetingMessage({
 
   const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
   const timeOfDayGreeting = getTimeOfDayGreeting(today);
-  const prompt = buildDailyGreetingPrompt({ location, timeOfDayGreeting, today });
+  const greetingContext = await buildDailyGreetingContext({ today, weatherInfo });
+  const prompt = buildDailyGreetingPrompt({ ...greetingContext, location, timeOfDayGreeting });
   const generateContentConfig: GenerateContentConfig = {
     maxOutputTokens: DAILY_GREETING_MAX_OUTPUT_TOKENS,
     temperature: 0.8,
+    thinkingConfig: {
+      thinkingBudget: 0,
+    },
   };
   const response = await fetchWithRateLimitRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -152,35 +164,59 @@ export function summarizeDailyGreetingGenerationError(error: unknown) {
 }
 
 function buildDailyGreetingPrompt({
+  dateInfo,
   location,
   timeOfDayGreeting,
-  today,
+  weatherInfo,
 }: {
+  dateInfo: string;
   location: string;
   timeOfDayGreeting: string;
-  today: Date;
+  weatherInfo: string;
 }) {
-  const todayStr = new Intl.DateTimeFormat("ja-JP", {
-    dateStyle: "long",
-    timeZone: DAILY_GREETING_TIME_ZONE,
-  }).format(today);
-
   return `
-本日の日付（${todayStr}）と、対象地域「${location}」の「現在の時期の典型的な天気や気候」、
-および今の時期の暦（二十四節気など）をあなたの知識から考慮してください。
+あなたは、${location}にお住まいの高齢者の方に毎日寄り添う、親切で優しいケアマネージャーです。
+以下の【今日の情報】を自然に盛り込んで、LINEで送る短い挨拶文を1つだけ作成してください。
 
-その情報をもとに、高齢者の方に向けた「今日の一言メッセージ（挨拶文）」を1つ作成してください。
+【今日の情報】
+・日付: ${dateInfo}
+・天気予報: ${weatherInfo}
 
-【条件】
-・本文の冒頭は必ず「${timeOfDayGreeting}」にする
-・2〜4文程度で完結させる
-・全体の文章量は、300文字〜500文字程度で簡潔にまとめる
-・「今日の季節感や暦」の話題から会話を始める
-・専門用語は使わず、語りかけるような優しい口調にする
-・体調を気遣う一言で締めくくる
-・スマホLINEで読みやすいよう、適度に改行を入れる
-・本文のみを出力する
+【お年寄り向けの絶対ルール】
+1. 本文の冒頭は必ず「${timeOfDayGreeting}」にしてください。
+2. 冒頭の挨拶の直後に、指定された日付の時期にぴったりな日本の暦や季節の言葉を1つ、わかりやすく含めてください。
+   例: 二十四節気、衣替え、梅雨入り、新緑、秋の気配、年の瀬、花の季節など。
+3. お年寄りが「ああ、もうそんな季節か」と感じられる、雑学的でやさしい表現にしてください。
+4. 文字数は「60文字〜95文字」の範囲内に収めてください。
+5. 漢字を多くせず、ひらがなを多めにして、専門用語は使わないでください。
+6. 天気予報や注意情報に基づき、具体的な行動アドバイスを必ず最後に入れてください。
+7. 解説や前置きは不要です。LINEの本文のみを出力してください。
 `.trim();
+}
+
+async function buildDailyGreetingContext({ today, weatherInfo }: { today: Date; weatherInfo?: string }) {
+  const baseWeatherInfo = weatherInfo ?? (await getNagoyaWeatherInfo());
+
+  return {
+    dateInfo: formatMonthDayInJapan(today),
+    weatherInfo: appendSeasonalCareInfo(baseWeatherInfo, today),
+  };
+}
+
+function appendSeasonalCareInfo(weatherInfo: string, today: Date) {
+  const { month } = getDatePartsInTimeZone(today, DAILY_GREETING_TIME_ZONE);
+
+  if (month >= 6 && month <= 9) {
+    return `${weatherInfo} ${HEATSTROKE_ALERT_INFO}`;
+  }
+
+  return weatherInfo;
+}
+
+function formatMonthDayInJapan(date: Date) {
+  const { day, month } = getDatePartsInTimeZone(date, DAILY_GREETING_TIME_ZONE);
+
+  return `${month}月${day}日`;
 }
 
 function looksIncompleteDailyGreeting(text: string) {
@@ -217,20 +253,25 @@ function getTimeOfDayGreeting(date: Date) {
 }
 
 function getHourInTimeZone(date: Date, timeZone: string) {
-  const hourPart = new Intl.DateTimeFormat("ja-JP", {
+  return getDatePartsInTimeZone(date, timeZone).hour;
+}
+
+function getDatePartsInTimeZone(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    day: "numeric",
     hour: "numeric",
     hourCycle: "h23",
     hour12: false,
+    month: "numeric",
     timeZone,
-  })
-    .formatToParts(date)
-    .find((part) => part.type === "hour");
+  }).formatToParts(date);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
 
-  const hour = Number(hourPart?.value);
-
-  if (!Number.isInteger(hour)) {
-    throw new Error(`Could not determine hour in time zone: ${timeZone}`);
+  if (!Number.isInteger(month) || !Number.isInteger(day) || !Number.isInteger(hour)) {
+    throw new Error(`Could not determine date parts in time zone: ${timeZone}`);
   }
 
-  return hour;
+  return { day, hour, month };
 }

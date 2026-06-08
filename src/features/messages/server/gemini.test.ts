@@ -6,9 +6,15 @@ import {
   summarizeDailyGreetingGenerationError,
 } from "./gemini";
 
-async function captureGenerationError() {
+const TEST_WEATHER_INFO = "名古屋市の天気は「くもり」。予想最高気温は 28度 です。";
+const TEST_GENERATION_OPTIONS = {
+  today: new Date("2026-06-07T00:00:00Z"),
+  weatherInfo: TEST_WEATHER_INFO,
+};
+
+async function captureGenerationError(options: Parameters<typeof generateDailyGreetingMessage>[0] = TEST_GENERATION_OPTIONS) {
   try {
-    await generateDailyGreetingMessage();
+    await generateDailyGreetingMessage(options);
   } catch (error) {
     return error;
   }
@@ -24,7 +30,7 @@ describe("generateDailyGreetingMessage", () => {
     delete process.env.MESSAGE_LOCATION;
   });
 
-  it("requests enough output tokens for a complete daily greeting", async () => {
+  it("requests a short no-thinking daily greeting with Nagoya weather context", async () => {
     process.env.GEMINI_API_KEY = "test-api-key";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
@@ -40,17 +46,21 @@ describe("generateDailyGreetingMessage", () => {
     );
 
     const result = await generateDailyGreetingMessage({
-      location: "日本",
-      today: new Date("2026-06-07T00:00:00Z"),
+      location: "名古屋市",
+      ...TEST_GENERATION_OPTIONS,
     });
 
     const requestInit = fetchMock.mock.calls[0]?.[1];
     const requestBody = JSON.parse(String(requestInit?.body));
-    expect(requestBody.generationConfig.maxOutputTokens).toBe(1000);
-    expect(requestBody.generationConfig.thinkingConfig).toBeUndefined();
+    expect(requestBody.generationConfig.maxOutputTokens).toBe(300);
+    expect(requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     expect(requestBody.contents[0].parts[0].text).toContain("本文の冒頭は必ず「お早うございます。」");
-    expect(requestBody.contents[0].parts[0].text).toContain("2〜4文程度で完結");
-    expect(requestBody.contents[0].parts[0].text).toContain("全体の文章量は、300文字〜500文字程度で簡潔にまとめる");
+    expect(requestBody.contents[0].parts[0].text).toContain("日付: 6月7日");
+    expect(requestBody.contents[0].parts[0].text).toContain(`天気予報: ${TEST_WEATHER_INFO}`);
+    expect(requestBody.contents[0].parts[0].text).toContain("【熱中症警戒】");
+    expect(requestBody.contents[0].parts[0].text).toContain("日本の暦や季節の言葉");
+    expect(requestBody.contents[0].parts[0].text).toContain("ああ、もうそんな季節か");
+    expect(requestBody.contents[0].parts[0].text).toContain("60文字〜95文字");
     expect(result.text).toBe("お早うございます。\n今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
   });
 
@@ -74,7 +84,7 @@ describe("generateDailyGreetingMessage", () => {
     expect(error).toEqual(expect.objectContaining({ message: "Gemini API returned an incomplete message." }));
     expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIから不完全なメッセージが返されました。");
     expect(getDailyGreetingGenerationPartialResult(error)).toEqual({
-      location: "日本",
+      location: "名古屋市",
       text: expect.stringMatching(/^(お早うございます。|こんにちは。|こんばんは。)\n2026年6月7日、$/),
     });
   });
@@ -96,6 +106,7 @@ describe("generateDailyGreetingMessage", () => {
 
     const result = await generateDailyGreetingMessage({
       today: new Date("2026-06-07T00:00:00Z"),
+      weatherInfo: TEST_WEATHER_INFO,
     });
 
     expect(result.text).toBe("お早うございます。\n今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
@@ -121,7 +132,7 @@ describe("generateDailyGreetingMessage", () => {
     expect(error).toEqual(expect.objectContaining({ message: "Gemini API returned an incomplete message." }));
     expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIから不完全なメッセージが返されました。");
     expect(getDailyGreetingGenerationPartialResult(error)).toEqual({
-      location: "日本",
+      location: "名古屋市",
       text: expect.stringMatching(/^(お早うございます。|こんにちは。|こんばんは。)\n2026年6月7日、$/),
     });
   });
