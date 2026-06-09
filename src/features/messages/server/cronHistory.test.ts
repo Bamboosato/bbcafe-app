@@ -22,6 +22,16 @@ describe("buildCronHistoryItems", () => {
     ];
     const reminderRuns: ConfirmationReminderRunView[] = [
       {
+        confirmedCount: 1,
+        confirmedTargets: [
+          {
+            confirmedAt: "2026-06-08T03:50:00.000Z",
+            reminderSentAt: null,
+            status: "confirmed",
+            userId: "user_1",
+            userName: "佐藤",
+          },
+        ],
         failedCount: 0,
         finishedAt: "2026-06-08T04:00:02.000Z",
         lineAccountId: "default",
@@ -31,6 +41,16 @@ describe("buildCronHistoryItems", () => {
         startedAt: "2026-06-08T04:00:00.000Z",
         status: "success",
         targetCount: 2,
+        unconfirmedCount: 1,
+        unconfirmedTargets: [
+          {
+            confirmedAt: null,
+            reminderSentAt: null,
+            status: "unconfirmed",
+            userId: "user_2",
+            userName: "鈴木",
+          },
+        ],
       },
     ];
 
@@ -44,12 +64,32 @@ describe("buildCronHistoryItems", () => {
         summary: "成功 3件 / 失敗 0件 / 対象 3件",
       },
       {
+        confirmedCount: 1,
+        confirmedTargets: [
+          {
+            confirmedAt: "2026-06-08T03:50:00.000Z",
+            reminderSentAt: null,
+            status: "confirmed",
+            userId: "user_1",
+            userName: "佐藤",
+          },
+        ],
         finishedAt: "2026-06-08T04:00:02.000Z",
         id: "confirm_1",
         kind: "check_unconfirmed_messages",
         startedAt: "2026-06-08T04:00:00.000Z",
         status: "success",
-        summary: "対象 2件 / 通知 1件 / 失敗 0件",
+        summary: "確認済 1件 / 未確認 1件 / 通知 1件 / 失敗 0件",
+        unconfirmedCount: 1,
+        unconfirmedTargets: [
+          {
+            confirmedAt: null,
+            reminderSentAt: null,
+            status: "unconfirmed",
+            userId: "user_2",
+            userName: "鈴木",
+          },
+        ],
       },
       {
         finishedAt: "2026-06-08T03:00:05.000Z",

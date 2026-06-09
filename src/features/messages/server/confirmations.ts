@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/server/firebase";
 import { toIsoString } from "@/lib/server/firestoreUtils";
 import type {
+  ConfirmationCheckTargetView,
   ConfirmationReminderRunView,
   SendRunMode,
   SendRunTargetConfirmationStatus,
@@ -33,6 +34,8 @@ type ConfirmationPostbackInput = {
 };
 
 type SaveConfirmationReminderRunInput = {
+  confirmedCount: number;
+  confirmedTargets: ConfirmationCheckTargetView[];
   failedCount: number;
   finishedAt: Date;
   lineAccountId: string;
@@ -42,6 +45,8 @@ type SaveConfirmationReminderRunInput = {
   startedAt: Date;
   status: ConfirmationReminderRunView["status"];
   targetCount: number;
+  unconfirmedCount: number;
+  unconfirmedTargets: ConfirmationCheckTargetView[];
 };
 
 export type ConfirmationTargetRecord = {
@@ -247,6 +252,33 @@ export async function listPendingConfirmationTargets(lineAccountId: string) {
     .sort((left, right) => left.userName.localeCompare(right.userName, "ja") || left.userId.localeCompare(right.userId));
 }
 
+export async function listConfirmationTargets(lineAccountId: string) {
+  const snapshot = await confirmationTargetsCollection(lineAccountId)
+    .limit(MAX_CONFIRMATION_REMINDERS)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => toConfirmationTargetRecord(lineAccountId, doc.id, doc.data()))
+    .sort((left, right) => left.userName.localeCompare(right.userName, "ja") || left.userId.localeCompare(right.userId));
+}
+
+export function buildConfirmationCheckSnapshot(targets: ConfirmationTargetRecord[]) {
+  const confirmedTargets = targets
+    .filter((target) => target.status === "confirmed")
+    .map((target) => toConfirmationCheckTargetView(target, "confirmed"));
+  const unconfirmedTargets = targets
+    .filter((target) => target.status !== "confirmed")
+    .map((target) => toConfirmationCheckTargetView(target, "unconfirmed"));
+
+  return {
+    confirmedCount: confirmedTargets.length,
+    confirmedTargets,
+    targetCount: targets.length,
+    unconfirmedCount: unconfirmedTargets.length,
+    unconfirmedTargets,
+  };
+}
+
 export function buildUnconfirmedReminderPushBody(targets: ConfirmationTargetRecord[]) {
   if (!targets.length) {
     return "";
@@ -290,6 +322,8 @@ export function createConfirmationReminderRunId(startedAt = new Date()) {
 
 export async function saveConfirmationReminderRun(input: SaveConfirmationReminderRunInput) {
   await confirmationReminderRunsCollection(input.lineAccountId).doc(input.runId).set({
+    confirmedCount: input.confirmedCount,
+    confirmedTargets: input.confirmedTargets,
     createdAt: FieldValue.serverTimestamp(),
     failedCount: input.failedCount,
     finishedAt: Timestamp.fromDate(input.finishedAt),
@@ -300,6 +334,8 @@ export async function saveConfirmationReminderRun(input: SaveConfirmationReminde
     startedAt: Timestamp.fromDate(input.startedAt),
     status: input.status,
     targetCount: input.targetCount,
+    unconfirmedCount: input.unconfirmedCount,
+    unconfirmedTargets: input.unconfirmedTargets,
     updatedAt: FieldValue.serverTimestamp(),
   });
 }
@@ -436,12 +472,30 @@ function normalizeConfirmationStatus(value: unknown): ConfirmationTargetRecord["
   return "pending";
 }
 
+function toConfirmationCheckTargetView(
+  target: ConfirmationTargetRecord,
+  status: ConfirmationCheckTargetView["status"],
+): ConfirmationCheckTargetView {
+  return {
+    confirmedAt: target.confirmedAt,
+    reminderSentAt: target.reminderSentAt,
+    status,
+    userId: target.userId,
+    userName: target.userName,
+  };
+}
+
 function toConfirmationReminderRunView(
   lineAccountId: string,
   runId: string,
   data: FirebaseFirestore.DocumentData,
 ): ConfirmationReminderRunView {
+  const confirmedTargets = toConfirmationCheckTargetViews(data.confirmedTargets, "confirmed");
+  const unconfirmedTargets = toConfirmationCheckTargetViews(data.unconfirmedTargets, "unconfirmed");
+
   return {
+    confirmedCount: Number(data.confirmedCount ?? confirmedTargets.length),
+    confirmedTargets,
     failedCount: Number(data.failedCount ?? 0),
     finishedAt: toIsoString(data.finishedAt),
     lineAccountId: String(data.lineAccountId ?? lineAccountId),
@@ -451,7 +505,30 @@ function toConfirmationReminderRunView(
     startedAt: toIsoString(data.startedAt) ?? new Date(0).toISOString(),
     status: normalizeReminderRunStatus(data.status),
     targetCount: Number(data.targetCount ?? 0),
+    unconfirmedCount: Number(data.unconfirmedCount ?? data.targetCount ?? unconfirmedTargets.length),
+    unconfirmedTargets,
   };
+}
+
+function toConfirmationCheckTargetViews(
+  value: unknown,
+  status: ConfirmationCheckTargetView["status"],
+): ConfirmationCheckTargetView[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => {
+    const data = typeof item === "object" && item !== null ? item as Record<string, unknown> : {};
+
+    return {
+      confirmedAt: typeof data.confirmedAt === "string" ? data.confirmedAt : null,
+      reminderSentAt: typeof data.reminderSentAt === "string" ? data.reminderSentAt : null,
+      status,
+      userId: String(data.userId ?? ""),
+      userName: String(data.userName ?? "不明なユーザー"),
+    };
+  });
 }
 
 function normalizeReminderRunStatus(value: unknown): ConfirmationReminderRunView["status"] {

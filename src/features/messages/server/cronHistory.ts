@@ -52,6 +52,8 @@ function toSendHistoryItem(run: SendRunView): CronHistoryItemView {
 
 function toReminderHistoryItem(run: ConfirmationReminderRunView): CronHistoryItemView {
   return {
+    confirmedCount: run.confirmedCount,
+    confirmedTargets: run.confirmedTargets,
     finishedAt: run.finishedAt,
     id: run.runId,
     kind: "check_unconfirmed_messages",
@@ -59,8 +61,10 @@ function toReminderHistoryItem(run: ConfirmationReminderRunView): CronHistoryIte
     status: run.status,
     summary:
       run.skippedReason ?
-        `対象 ${run.targetCount}件 / 通知 ${run.notifiedCount}件 / ${run.skippedReason}` :
-        `対象 ${run.targetCount}件 / 通知 ${run.notifiedCount}件 / 失敗 ${run.failedCount}件`,
+        `確認済 ${run.confirmedCount}件 / 未確認 ${run.unconfirmedCount}件 / 通知 ${run.notifiedCount}件 / ${run.skippedReason}` :
+        `確認済 ${run.confirmedCount}件 / 未確認 ${run.unconfirmedCount}件 / 通知 ${run.notifiedCount}件 / 失敗 ${run.failedCount}件`,
+    unconfirmedCount: run.unconfirmedCount,
+    unconfirmedTargets: run.unconfirmedTargets,
   };
 }
 

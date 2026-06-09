@@ -1396,6 +1396,18 @@ function CronHistoryScreen({
                 <span>{formatCronHistoryStatus(item.status)}</span>
               </span>
               <span className="message-text">{item.summary}</span>
+              {item.kind === "check_unconfirmed_messages" ? (
+                <div className="cron-confirmation-details">
+                  <div>
+                    <span>確認済み</span>
+                    <strong>{formatCronConfirmationTargets(item.confirmedTargets)}</strong>
+                  </div>
+                  <div>
+                    <span>未確認</span>
+                    <strong>{formatCronConfirmationTargets(item.unconfirmedTargets)}</strong>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -1884,7 +1896,7 @@ function formatConfirmationStatus(status: SendRunView["targets"][number]["confir
 
 function formatCronHistoryKind(kind: CronHistoryItemView["kind"]) {
   if (kind === "check_unconfirmed_messages") {
-    return "未確認チェック";
+    return "確認チェック";
   }
 
   if (kind === "delete_expired_messages") {
@@ -1892,6 +1904,14 @@ function formatCronHistoryKind(kind: CronHistoryItemView["kind"]) {
   }
 
   return "自動送信";
+}
+
+function formatCronConfirmationTargets(targets: CronHistoryItemView["confirmedTargets"]) {
+  if (!targets?.length) {
+    return "なし";
+  }
+
+  return targets.map((target) => target.userName).join("、");
 }
 
 function formatCronHistoryStatus(status: string) {

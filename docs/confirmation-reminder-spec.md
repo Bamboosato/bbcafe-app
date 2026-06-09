@@ -70,13 +70,18 @@ lineAccounts/{lineAccountId}/confirmationTargets/{userId}
 - `reminderSentAt`
 - `updatedAt`
 
-## 未確認チェックCron
+## 確認チェックCron
 
 - Route: `/api/cron/check-unconfirmed-messages`
 - Schedule: `0 4 * * *`
 - JST: 13:00
 
-13:00時点で未確認の最新確認対象をチェックする。実際の送信時刻が遅れていても、送信から6時間経過しているかは判定しない。
+13:00時点で最新確認対象をチェックし、確認済みと未確認を記録する。実際の送信時刻が遅れていても、送信から6時間経過しているかは判定しない。
+
+- 確認済み: `status = confirmed`
+- 未確認: `status = pending` または `status = reminded`
+
+Push通知は `pending` の未確認対象がいる場合のみ行う。`reminded` は未確認として履歴に残すが、再通知対象にはしない。
 
 ## Push通知
 
@@ -87,4 +92,11 @@ lineAccounts/{lineAccountId}/confirmationTargets/{userId}
 
 通知後、対象は `reminded` に更新し、同じ送信に対する通知は繰り返さない。
 
-未確認チェックの実行結果はCron履歴に記録する。
+確認チェックの実行結果はCron履歴に記録する。
+
+- 確認済み件数
+- 未確認件数
+- 確認済みユーザー名
+- 未確認ユーザー名
+- Push通知件数
+- Push通知失敗件数

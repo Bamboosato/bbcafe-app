@@ -8,6 +8,7 @@ import {
   buildConfirmationPostbackData,
   buildConfirmationQuickReplyIconUrl,
   buildConfirmationQuickReply,
+  buildConfirmationCheckSnapshot,
   buildUnconfirmedReminderPushBody,
   prepareSendRunTargetsForConfirmation,
 } from "./confirmations";
@@ -115,7 +116,52 @@ describe("unconfirmed reminder push body", () => {
   });
 });
 
-function confirmationTarget(userId: string, userName: string): ConfirmationTargetRecord {
+describe("confirmation check snapshot", () => {
+  it("splits confirmed targets from pending and reminded unconfirmed targets", () => {
+    expect(
+      buildConfirmationCheckSnapshot([
+        confirmationTarget("user_1", "佐藤", "confirmed"),
+        confirmationTarget("user_2", "鈴木", "pending"),
+        confirmationTarget("user_3", "田中", "reminded"),
+      ]),
+    ).toEqual({
+      confirmedCount: 1,
+      confirmedTargets: [
+        {
+          confirmedAt: null,
+          reminderSentAt: null,
+          status: "confirmed",
+          userId: "user_1",
+          userName: "佐藤",
+        },
+      ],
+      targetCount: 3,
+      unconfirmedCount: 2,
+      unconfirmedTargets: [
+        {
+          confirmedAt: null,
+          reminderSentAt: null,
+          status: "unconfirmed",
+          userId: "user_2",
+          userName: "鈴木",
+        },
+        {
+          confirmedAt: null,
+          reminderSentAt: null,
+          status: "unconfirmed",
+          userId: "user_3",
+          userName: "田中",
+        },
+      ],
+    });
+  });
+});
+
+function confirmationTarget(
+  userId: string,
+  userName: string,
+  status: ConfirmationTargetRecord["status"] = "pending",
+): ConfirmationTargetRecord {
   return {
     confirmedAt: null,
     lineAccountId: "default",
@@ -123,7 +169,7 @@ function confirmationTarget(userId: string, userName: string): ConfirmationTarge
     reminderSentAt: null,
     runId: "run_1",
     sentAt: "2026-06-09T00:00:00.000Z",
-    status: "pending",
+    status,
     userId,
     userName,
   };
