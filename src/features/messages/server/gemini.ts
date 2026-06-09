@@ -1,10 +1,13 @@
-import { fetchWithRateLimitRetry } from "./rateLimitRetry";
 import { getNagoyaWeatherInfo } from "./weather";
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+const DEFAULT_GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const DEFAULT_GEMINI_MAX_RETRIES_PER_MODEL = 1;
+const DEFAULT_GEMINI_RETRY_DELAY_MS = 700;
 const DEFAULT_MESSAGE_LOCATION = "名古屋市";
 const DAILY_GREETING_MAX_OUTPUT_TOKENS = 300;
 const DAILY_GREETING_TIME_ZONE = "Asia/Tokyo";
+const GEMINI_TRANSIENT_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
 const TIME_OF_DAY_GREETINGS = ["お早うございます。", "こんにちは。", "こんばんは。"] as const;
 const UNKNOWN_GENERATION_ERROR_SUMMARY = "メッセージ生成APIで不明なエラーが発生しました。";
 const HEATSTROKE_ALERT_INFO =
@@ -33,6 +36,14 @@ type GenerateContentConfig = {
   thinkingConfig: {
     thinkingBudget: number;
   };
+};
+
+type GeminiGenerateContentRequest = {
+  apiKey: string;
+  body: string;
+  maxRetriesPerModel: number;
+  models: string[];
+  retryDelayMs: number;
 };
 
 class GeminiMessageGenerationError extends Error {
@@ -64,7 +75,7 @@ export async function generateDailyGreetingMessage({
     );
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const models = getGeminiModelCandidates();
   const timeOfDayGreeting = getTimeOfDayGreeting(today);
   const greetingContext = await buildDailyGreetingContext({ today, weatherInfo });
   const prompt = buildDailyGreetingPrompt({ ...greetingContext, location, timeOfDayGreeting });
@@ -75,36 +86,21 @@ export async function generateDailyGreetingMessage({
       thinkingBudget: 0,
     },
   };
-  const response = await fetchWithRateLimitRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }],
-            role: "user",
-          },
-        ],
-        generationConfig: generateContentConfig,
-      }),
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      method: "POST",
-    },
-  );
-
-  const payload = (await response.json().catch(() => ({}))) as GeminiErrorResponse & GeminiGenerateContentResponse;
-
-  if (!response.ok) {
-    const apiSummary = payload.error?.message || response.statusText || "Gemini API request failed.";
-
-    throw new GeminiMessageGenerationError(
-      apiSummary,
-      `Gemini APIエラー ${response.status}: ${apiSummary}`,
-    );
-  }
+  const payload = await generateGeminiContent({
+    apiKey,
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [{ text: prompt }],
+          role: "user",
+        },
+      ],
+      generationConfig: generateContentConfig,
+    }),
+    maxRetriesPerModel: getGeminiMaxRetriesPerModel(),
+    models,
+    retryDelayMs: getGeminiRetryDelayMs(),
+  });
 
   const candidate = payload.candidates?.[0];
   const finishReason = candidate?.finishReason;
@@ -141,6 +137,59 @@ export async function generateDailyGreetingMessage({
     location,
     text,
   };
+}
+
+async function generateGeminiContent({
+  apiKey,
+  body,
+  maxRetriesPerModel,
+  models,
+  retryDelayMs,
+}: GeminiGenerateContentRequest) {
+  let lastTransientError: null | { status: number; summary: string } = null;
+
+  for (const model of models) {
+    for (let attempt = 0; attempt <= maxRetriesPerModel; attempt += 1) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          body,
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey,
+          },
+          method: "POST",
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as GeminiErrorResponse & GeminiGenerateContentResponse;
+
+      if (response.ok) {
+        return payload;
+      }
+
+      const apiSummary = payload.error?.message || response.statusText || "Gemini API request failed.";
+
+      if (!GEMINI_TRANSIENT_HTTP_STATUSES.has(response.status)) {
+        throw new GeminiMessageGenerationError(
+          apiSummary,
+          `Gemini APIエラー ${response.status}: ${apiSummary}`,
+        );
+      }
+
+      lastTransientError = { status: response.status, summary: apiSummary };
+
+      if (attempt < maxRetriesPerModel) {
+        await wait(resolveRetryDelayMs(response.headers.get("retry-after"), retryDelayMs, attempt));
+      }
+    }
+  }
+
+  throw new GeminiMessageGenerationError(
+    lastTransientError?.summary ?? "Gemini API request failed.",
+    lastTransientError ?
+      `Gemini APIエラー ${lastTransientError.status}: ${lastTransientError.summary}` :
+      "Gemini API request failed.",
+  );
 }
 
 export function getDailyGreetingGenerationPartialResult(error: unknown) {
@@ -274,4 +323,61 @@ function getDatePartsInTimeZone(date: Date, timeZone: string) {
   }
 
   return { day, hour, month };
+}
+
+function getGeminiModelCandidates() {
+  const primaryModel = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const configuredFallbackModels = parseCommaSeparatedEnv(process.env.GEMINI_FALLBACK_MODELS);
+  const fallbackModels = configuredFallbackModels.length ? configuredFallbackModels : DEFAULT_GEMINI_FALLBACK_MODELS;
+
+  return [...new Set([primaryModel, ...fallbackModels])];
+}
+
+function getGeminiMaxRetriesPerModel() {
+  return normalizeNonNegativeInteger(process.env.GEMINI_MAX_RETRIES_PER_MODEL, DEFAULT_GEMINI_MAX_RETRIES_PER_MODEL);
+}
+
+function getGeminiRetryDelayMs() {
+  return normalizeNonNegativeInteger(process.env.GEMINI_RETRY_DELAY_MS, DEFAULT_GEMINI_RETRY_DELAY_MS);
+}
+
+function normalizeNonNegativeInteger(value: string | undefined, fallback: number) {
+  const number = Number(value);
+
+  return Number.isInteger(number) && number >= 0 ? number : fallback;
+}
+
+function parseCommaSeparatedEnv(value: string | undefined) {
+  return (value ?? "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+}
+
+function resolveRetryDelayMs(retryAfter: null | string, retryDelayMs: number, attempt: number) {
+  const trimmedRetryAfter = retryAfter?.trim();
+
+  if (trimmedRetryAfter) {
+    const retryAfterSeconds = Number(trimmedRetryAfter);
+
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
+      return retryAfterSeconds * 1000;
+    }
+
+    const retryAfterDate = Date.parse(trimmedRetryAfter);
+
+    if (!Number.isNaN(retryAfterDate)) {
+      return Math.max(0, retryAfterDate - Date.now());
+    }
+  }
+
+  return retryDelayMs * 2 ** attempt;
+}
+
+function wait(ms: number) {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
