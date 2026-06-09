@@ -26,7 +26,10 @@ describe("generateDailyGreetingMessage", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     delete process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_FALLBACK_MODELS;
+    delete process.env.GEMINI_MAX_RETRIES_PER_MODEL;
     delete process.env.GEMINI_MODEL;
+    delete process.env.GEMINI_RETRY_DELAY_MS;
     delete process.env.MESSAGE_LOCATION;
   });
 
@@ -52,6 +55,7 @@ describe("generateDailyGreetingMessage", () => {
 
     const requestInit = fetchMock.mock.calls[0]?.[1];
     const requestBody = JSON.parse(String(requestInit?.body));
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/models/gemini-2.5-flash:generateContent");
     expect(requestBody.generationConfig.maxOutputTokens).toBe(300);
     expect(requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     expect(requestBody.contents[0].parts[0].text).toContain("本文の冒頭は必ず「お早うございます。」");
@@ -62,6 +66,64 @@ describe("generateDailyGreetingMessage", () => {
     expect(requestBody.contents[0].parts[0].text).toContain("ああ、もうそんな季節か");
     expect(requestBody.contents[0].parts[0].text).toContain("60文字〜95文字");
     expect(result.text).toBe("お早うございます。\n今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
+  });
+
+  it("falls back to flash-lite when the primary Gemini model is temporarily unavailable", async () => {
+    process.env.GEMINI_API_KEY = "test-api-key";
+    process.env.GEMINI_MAX_RETRIES_PER_MODEL = "0";
+    process.env.GEMINI_RETRY_DELAY_MS = "0";
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            error: {
+              message: "This model is currently experiencing high demand.",
+            },
+          },
+          { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: "今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。" }],
+              },
+              finishReason: "STOP",
+            },
+          ],
+        }),
+      );
+
+    const result = await generateDailyGreetingMessage(TEST_GENERATION_OPTIONS);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/models/gemini-2.5-flash:generateContent");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/models/gemini-2.5-flash-lite:generateContent");
+    expect(result.text).toBe("お早うございます。\n今日は穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
+  });
+
+  it("keeps the Gemini API summary when every model is temporarily unavailable", async () => {
+    process.env.GEMINI_API_KEY = "test-api-key";
+    process.env.GEMINI_MAX_RETRIES_PER_MODEL = "0";
+    process.env.GEMINI_RETRY_DELAY_MS = "0";
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(
+      Response.json(
+        {
+          error: {
+            message: "This model is currently experiencing high demand.",
+          },
+        },
+        { status: 503 },
+      ),
+    ));
+
+    const error = await captureGenerationError();
+
+    expect(summarizeDailyGreetingGenerationError(error)).toBe(
+      "Gemini APIエラー 503: This model is currently experiencing high demand.",
+    );
   });
 
   it("rejects an obviously incomplete Gemini response with a display summary", async () => {
@@ -180,6 +242,7 @@ describe("generateDailyGreetingMessage", () => {
 
     const error = await captureGenerationError();
 
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     expect(summarizeDailyGreetingGenerationError(error)).toBe("Gemini APIエラー 400: API key not valid.");
   });
 });

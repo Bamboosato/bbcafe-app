@@ -17,6 +17,7 @@ Preview環境でログイン、メッセージ取得、Webhook受信、Push通�
 | 保存期間 | `RETENTION_DAYS` |
 | Cron保護 | `CRON_SECRET` |
 | Push通知 | `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY`, `WEB_PUSH_SUBJECT` |
+| メッセージ作成 | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`, `GEMINI_MAX_RETRIES_PER_MODEL`, `GEMINI_RETRY_DELAY_MS`, `MESSAGE_LOCATION` |
 
 `ADMIN_PASSWORD_HASH` と `VIEWER_PASSWORD_HASH` は `npm run hash-password -- <password>` で生成します。
 `APP_BASE_URL` は `https://<preview-domain>` の形式で設定します。LINEの確認ボタン用アイコンURLに使用します。
