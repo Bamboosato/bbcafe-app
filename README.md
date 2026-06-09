@@ -33,6 +33,7 @@ npm run hash-password -- <viewer-password>
 ```env
 ADMIN_LOGIN_ID=admin
 ADMIN_PASSWORD_HASH=<generated admin hash>
+APP_BASE_URL=https://<your-domain>
 
 VIEWER_SHARED_ID=bbcafe
 VIEWER_PASSWORD_HASH=<generated viewer hash>
@@ -40,6 +41,7 @@ RETENTION_DAYS=90
 ```
 
 その他、Firebase Admin SDK、LINE Messaging API、Cron用の値も `.env.local` またはVercel Environment Variablesへ設定します。
+`APP_BASE_URL` はLINEの確認ボタン用アイコンURL生成に使います。未設定の場合、VercelのデプロイURLが取得できる環境ではそれを使用し、取得できない場合はアイコンなしで送信します。
 
 Push通知を使う場合はVAPIDキーを生成し、`.env.local` とVercel Environment Variablesへ設定します。
 

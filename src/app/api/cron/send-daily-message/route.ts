@@ -90,6 +90,7 @@ export async function GET(request: Request) {
     const credentials = await getLineCredentials(lineAccountId);
     const results = await sendLineTextMessages({
       channelAccessToken: credentials.channelAccessToken,
+      confirmation: { runId },
       text,
       userIds: selectedUsers.map((user) => user.userId),
     });

@@ -792,25 +792,29 @@ label {
   margin: 0;
 }
 
-.failed-target-list {
+.failed-target-list,
+.target-status-list {
   border: 1px solid var(--border);
   border-radius: 8px;
   display: grid;
   overflow: hidden;
 }
 
-.failed-target-row {
+.failed-target-row,
+.target-status-row {
   border-bottom: 1px solid var(--border);
   display: grid;
   gap: 4px;
   padding: 10px;
 }
 
-.failed-target-row:last-child {
+.failed-target-row:last-child,
+.target-status-row:last-child {
   border-bottom: 0;
 }
 
-.failed-target-row span {
+.failed-target-row span,
+.target-status-row span {
   color: var(--muted);
   font-size: 12px;
   overflow-wrap: anywhere;

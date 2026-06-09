@@ -5,6 +5,7 @@ import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireViewerSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
 import {
+  createManualSendRunId,
   getDailyBroadcastSettings,
   listSelectedBroadcastUsers,
   saveSendRun,
@@ -40,6 +41,8 @@ export async function POST(request: Request) {
   }
 
   let selectedUsers: UserInfoView[] = [];
+  let runId: null | string = null;
+  let sentAt: null | Date = null;
 
   try {
     selectedUsers = await listSelectedBroadcastUsers(auth.payload.lineAccountId);
@@ -50,8 +53,11 @@ export async function POST(request: Request) {
 
     const credentials = await getLineCredentials(auth.payload.lineAccountId);
     const text = formatDailyGreetingForSend(message);
+    sentAt = new Date();
+    runId = createManualSendRunId(sentAt);
     const results = await sendLineTextMessages({
       channelAccessToken: credentials.channelAccessToken,
+      confirmation: { runId },
       text,
       userIds: selectedUsers.map((user) => user.userId),
     });
@@ -64,6 +70,8 @@ export async function POST(request: Request) {
       messageText: text,
       mode: "manual",
       requestId,
+      runId,
+      sentAt,
       targets,
       trigger: "viewer",
     });
@@ -92,6 +100,8 @@ export async function POST(request: Request) {
         lineAccountId: auth.payload.lineAccountId,
         message,
         requestId,
+        runId,
+        sentAt,
         selectedUsers,
       }).catch((saveError) => {
         console.error("[message-assistant-send] failed to save failure run", {
@@ -134,12 +144,16 @@ async function saveManualFailureRun({
   lineAccountId,
   message,
   requestId,
+  runId,
+  sentAt,
   selectedUsers,
 }: {
   error: unknown;
   lineAccountId: string;
   message: string;
   requestId: string;
+  runId: null | string;
+  sentAt: null | Date;
   selectedUsers: UserInfoView[];
 }) {
   const settings = await getDailyBroadcastSettings(lineAccountId);
@@ -152,6 +166,8 @@ async function saveManualFailureRun({
     messageText: text,
     mode: "manual",
     requestId,
+    ...(runId ? { runId } : {}),
+    ...(sentAt ? { sentAt } : {}),
     targets: selectedUsers.map((user) => ({
       errorCode,
       status: "failed",

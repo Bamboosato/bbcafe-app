@@ -5,11 +5,16 @@ import { toIsoString } from "@/lib/server/firestoreUtils";
 import type {
   AutomationSettingsView,
   SendRunMode,
+  SendRunTargetConfirmationStatus,
   SendRunStatus,
   SendRunTargetView,
   SendRunView,
   UserInfoView,
 } from "../types";
+import {
+  prepareSendRunTargetsForConfirmation,
+  registerLatestConfirmationTargets,
+} from "./confirmations";
 import { listUserInfos } from "./messages";
 
 export const DAILY_BROADCAST_SETTINGS_ID = "dailyBroadcast";
@@ -339,8 +344,9 @@ export async function saveSendRun(input: SaveSendRunInput) {
   const sentAt = input.sentAt ?? new Date();
   const startedAt = input.startedAt ?? sentAt;
   const historyRetentionDays = normalizeHistoryRetentionDays(input.historyRetentionDays);
-  const successCount = input.targets.filter((target) => target.status === "success").length;
-  const failedCount = input.targets.filter((target) => target.status === "failed").length;
+  const targets = prepareSendRunTargetsForConfirmation(input.targets);
+  const successCount = targets.filter((target) => target.status === "success").length;
+  const failedCount = targets.filter((target) => target.status === "failed").length;
   const status = calculateSendRunStatus(successCount, failedCount);
   const runId = input.runId ?? createManualSendRunId(sentAt);
   const ref = sendRunsCollection(input.lineAccountId).doc(runId);
@@ -361,13 +367,21 @@ export async function saveSendRun(input: SaveSendRunInput) {
       startedAt: Timestamp.fromDate(startedAt),
       status,
       successCount,
-      targetCount: input.targets.length,
-      targets: input.targets,
+      targetCount: targets.length,
+      targets,
       trigger: input.trigger,
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: false },
   );
+
+  await registerLatestConfirmationTargets({
+    lineAccountId: input.lineAccountId,
+    mode: input.mode,
+    runId,
+    sentAt,
+    targets,
+  });
 
   return getSendRun(input.lineAccountId, runId);
 }
@@ -601,12 +615,26 @@ function toSendRunTargetView(value: unknown): SendRunTargetView {
   const httpStatus = Number(data.httpStatus);
 
   return {
+    confirmationStatus: normalizeTargetConfirmationStatus(data.confirmationStatus, status),
+    confirmedAt: toIsoString(data.confirmedAt),
     ...(typeof data.errorCode === "string" ? { errorCode: data.errorCode } : {}),
     ...(Number.isInteger(httpStatus) ? { httpStatus } : {}),
+    reminderSentAt: toIsoString(data.reminderSentAt),
     status,
     userId: String(data.userId ?? ""),
     userName: String(data.userName ?? "不明なユーザー"),
   };
+}
+
+function normalizeTargetConfirmationStatus(
+  value: unknown,
+  sendStatus: SendRunTargetView["status"],
+): SendRunTargetConfirmationStatus {
+  if (value === "confirmed" || value === "pending" || value === "reminded" || value === "not_required") {
+    return value;
+  }
+
+  return sendStatus === "success" ? "not_required" : "not_required";
 }
 
 function normalizeSendRunStatus(value: unknown, successCount: number, failedCount: number): SendRunStatus {

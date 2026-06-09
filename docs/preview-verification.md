@@ -12,12 +12,14 @@ Preview環境でログイン、メッセージ取得、Webhook受信、Push通�
 | 管理者ログイン | `ADMIN_LOGIN_ID`, `ADMIN_PASSWORD_HASH` |
 | 閲覧者ログイン | `VIEWER_SHARED_ID`, `VIEWER_PASSWORD_HASH` |
 | セッション署名 | `SESSION_SECRET` |
+| アプリ公開URL | `APP_BASE_URL` |
 | LINE Messaging API | `LINE_DEFAULT_ACCOUNT_ID`, `LINE_CHANNEL_ID`, `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_ACCOUNT_DISPLAY_NAME` |
 | 保存期間 | `RETENTION_DAYS` |
 | Cron保護 | `CRON_SECRET` |
 | Push通知 | `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY`, `WEB_PUSH_SUBJECT` |
 
 `ADMIN_PASSWORD_HASH` と `VIEWER_PASSWORD_HASH` は `npm run hash-password -- <password>` で生成します。
+`APP_BASE_URL` は `https://<preview-domain>` の形式で設定します。LINEの確認ボタン用アイコンURLに使用します。
 
 ## Preview URLで確認する項目
 

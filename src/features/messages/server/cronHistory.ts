@@ -1,17 +1,25 @@
-import type { CronHistoryItemView, CronRunView, SendRunView } from "../types";
+import type {
+  ConfirmationReminderRunView,
+  CronHistoryItemView,
+  CronRunView,
+  SendRunView,
+} from "../types";
 
 export function buildCronHistoryItems({
   deleteRuns,
   limit = 50,
+  reminderRuns = [],
   sendRuns,
 }: {
   deleteRuns: CronRunView[];
   limit?: number;
+  reminderRuns?: ConfirmationReminderRunView[];
   sendRuns: SendRunView[];
 }): CronHistoryItemView[] {
   return [
     ...deleteRuns.map(toDeleteHistoryItem),
     ...sendRuns.filter((run) => run.mode === "auto").map(toSendHistoryItem),
+    ...reminderRuns.map(toReminderHistoryItem),
   ]
     .sort((left, right) => right.startedAt.localeCompare(left.startedAt) || right.id.localeCompare(left.id))
     .slice(0, normalizeLimit(limit));
@@ -39,6 +47,20 @@ function toSendHistoryItem(run: SendRunView): CronHistoryItemView {
     startedAt: run.startedAt,
     status: run.status,
     summary: `成功 ${run.successCount}件 / 失敗 ${run.failedCount}件 / 対象 ${run.targetCount}件`,
+  };
+}
+
+function toReminderHistoryItem(run: ConfirmationReminderRunView): CronHistoryItemView {
+  return {
+    finishedAt: run.finishedAt,
+    id: run.runId,
+    kind: "check_unconfirmed_messages",
+    startedAt: run.startedAt,
+    status: run.status,
+    summary:
+      run.skippedReason ?
+        `対象 ${run.targetCount}件 / 通知 ${run.notifiedCount}件 / ${run.skippedReason}` :
+        `対象 ${run.targetCount}件 / 通知 ${run.notifiedCount}件 / 失敗 ${run.failedCount}件`,
   };
 }
 

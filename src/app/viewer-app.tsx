@@ -1765,6 +1765,7 @@ function SendRunDetailModal({ run, onClose }: { run: SendRunView | null; onClose
   }
 
   const failedTargets = run.targets.filter((target) => target.status === "failed");
+  const confirmationTargets = run.targets.filter((target) => target.status === "success");
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
@@ -1801,6 +1802,23 @@ function SendRunDetailModal({ run, onClose }: { run: SendRunView | null; onClose
         <div className="send-run-detail-section">
           <h3>本文</h3>
           <p className="message-modal-text">{run.messageText || "本文は保存されていません。"}</p>
+        </div>
+        <div className="send-run-detail-section">
+          <h3>確認状況</h3>
+          {confirmationTargets.length ? (
+            <div className="target-status-list">
+              {confirmationTargets.map((target) => (
+                <div className="target-status-row" key={target.userId}>
+                  <strong>{target.userName}</strong>
+                  <span>{formatConfirmationStatus(target.confirmationStatus)}</span>
+                  {target.confirmedAt ? <span>確認日時 {formatTime(target.confirmedAt)}</span> : null}
+                  {target.reminderSentAt ? <span>通知日時 {formatTime(target.reminderSentAt)}</span> : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="status-text">確認対象はありません。</p>
+          )}
         </div>
         <div className="send-run-detail-section">
           <h3>失敗ユーザ</h3>
@@ -1848,7 +1866,27 @@ function formatSendRunStatus(status: SendRunView["status"]) {
   return "失敗";
 }
 
+function formatConfirmationStatus(status: SendRunView["targets"][number]["confirmationStatus"]) {
+  if (status === "confirmed") {
+    return "確認済み";
+  }
+
+  if (status === "reminded") {
+    return "未確認（通知済み）";
+  }
+
+  if (status === "pending") {
+    return "未確認";
+  }
+
+  return "対象外";
+}
+
 function formatCronHistoryKind(kind: CronHistoryItemView["kind"]) {
+  if (kind === "check_unconfirmed_messages") {
+    return "未確認チェック";
+  }
+
   if (kind === "delete_expired_messages") {
     return "自動削除";
   }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAutoBroadcastResultPushPayload,
   buildNewMessagePushPayload,
+  buildUnconfirmedMessageReminderPushPayload,
   normalizePushSubscription,
 } from "./pushNotifications";
 
@@ -19,6 +20,15 @@ describe("push notification helpers", () => {
     expect(buildAutoBroadcastResultPushPayload("自動送信が完了しました（成功5件 / 失敗0件）")).toEqual({
       body: "自動送信が完了しました（成功5件 / 失敗0件）",
       tag: "auto-broadcast-result",
+      title: "BB Cafe Messages",
+      url: "/sent",
+    });
+  });
+
+  it("builds an unconfirmed reminder payload that opens send history", () => {
+    expect(buildUnconfirmedMessageReminderPushPayload("佐藤さんに未確認メッセージがあります")).toEqual({
+      body: "佐藤さんに未確認メッセージがあります",
+      tag: "unconfirmed-message-reminder",
       title: "BB Cafe Messages",
       url: "/sent",
     });
