@@ -107,6 +107,15 @@ export function buildAutoBroadcastResultPushPayload(body: string) {
   };
 }
 
+export function buildUnconfirmedMessageReminderPushPayload(body: string) {
+  return {
+    body,
+    tag: "unconfirmed-message-reminder",
+    title: "BB Cafe Messages",
+    url: "/sent",
+  };
+}
+
 export async function upsertPushSubscription(input: UpsertPushSubscriptionInput) {
   const subscription = normalizePushSubscription(input.subscription);
 

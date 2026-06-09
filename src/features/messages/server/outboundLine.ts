@@ -1,4 +1,5 @@
 import { fetchWithRateLimitRetry } from "./rateLimitRetry";
+import { buildConfirmationQuickReply } from "./confirmations";
 
 export type LinePushResult = {
   errorCode?: string;
@@ -9,10 +10,14 @@ export type LinePushResult = {
 
 export async function sendLineTextMessages({
   channelAccessToken,
+  confirmation,
   text,
   userIds,
 }: {
   channelAccessToken: string;
+  confirmation?: {
+    runId: string;
+  };
   text: string;
   userIds: string[];
 }) {
@@ -24,6 +29,9 @@ export async function sendLineTextMessages({
         body: JSON.stringify({
           messages: [
             {
+              ...(confirmation
+                ? { quickReply: buildConfirmationQuickReply({ runId: confirmation.runId, userId }) }
+                : {}),
               text,
               type: "text",
             },

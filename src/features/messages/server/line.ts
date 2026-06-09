@@ -4,6 +4,7 @@ import { getLineAccount } from "./lineAccounts";
 import { saveTextMessage, deleteMessagesByLineMessageId } from "./messages";
 import { sendNewMessagePushNotifications } from "./pushNotifications";
 import { upsertBroadcastUser } from "./broadcasts";
+import { markConfirmationFromPostback } from "./confirmations";
 
 const FALLBACK_GROUP_NAME = "ユーザグループ";
 const FALLBACK_USER_NAME = "不明なユーザー";
@@ -34,6 +35,9 @@ type LineWebhookEvent = {
     text?: string;
     type?: string;
   };
+  postback?: {
+    data?: string;
+  };
   unsend?: {
     messageId?: string;
   };
@@ -56,12 +60,28 @@ export async function processLineWebhookEvents(input: {
 }) {
   const events = Array.isArray(input.payload.events) ? input.payload.events : [];
   const results = {
+    confirmed: 0,
     deleted: 0,
     ignored: 0,
     saved: 0,
   };
 
   for (const event of events) {
+    if (event.type === "postback" && event.postback?.data) {
+      const result = await markConfirmationFromPostback({
+        lineAccountId: input.lineAccountId,
+        postbackData: event.postback.data,
+        sourceUserId: event.source?.userId ?? null,
+      });
+
+      if (result.confirmed) {
+        results.confirmed += 1;
+      } else {
+        results.ignored += 1;
+      }
+      continue;
+    }
+
     if (event.type === "message" && event.message?.type === "text") {
       const saved = await processTextMessageEvent(input.lineAccountId, input.channelAccessToken, event);
 

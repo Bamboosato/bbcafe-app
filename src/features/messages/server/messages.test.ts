@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import firestoreIndexes from "../../../../firestore.indexes.json";
+import vercelConfig from "../../../../vercel.json";
 
 describe("message retention policy", () => {
   it("protects the newest 1000 records from retention deletion", () => {
@@ -24,10 +25,20 @@ describe("firestore index coverage", () => {
   });
 });
 
+describe("cron schedules", () => {
+  it("checks unconfirmed messages at 13:00 JST", () => {
+    expect(hasCronSchedule("/api/cron/check-unconfirmed-messages", "0 4 * * *")).toBe(true);
+  });
+});
+
 function hasCollectionIndex(collectionGroup: string, requiredFields: string[]) {
   return firestoreIndexes.indexes.some((index) => {
     const fields = index.fields.map((field) => `${field.fieldPath}:${field.order}`);
 
     return index.collectionGroup === collectionGroup && requiredFields.every((field) => fields.includes(field));
   });
+}
+
+function hasCronSchedule(path: string, schedule: string) {
+  return vercelConfig.crons.some((cron) => cron.path === path && cron.schedule === schedule);
 }

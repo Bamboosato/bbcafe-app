@@ -58,9 +58,14 @@ export type SendRunMode = "auto" | "manual";
 
 export type SendRunStatus = "failed" | "partial_failed" | "success";
 
+export type SendRunTargetConfirmationStatus = "confirmed" | "not_required" | "pending" | "reminded";
+
 export type SendRunTargetView = {
+  confirmationStatus?: SendRunTargetConfirmationStatus;
+  confirmedAt?: null | string;
   errorCode?: string;
   httpStatus?: number;
+  reminderSentAt?: null | string;
   status: "failed" | "success";
   userId: string;
   userName: string;
@@ -98,7 +103,19 @@ export type CronRunView = {
   status: "failed" | "skipped" | "success";
 };
 
-export type CronHistoryItemKind = "delete_expired_messages" | "send_daily_message";
+export type ConfirmationReminderRunView = {
+  failedCount: number;
+  finishedAt: null | string;
+  lineAccountId: string;
+  notifiedCount: number;
+  runId: string;
+  skippedReason: null | string;
+  startedAt: string;
+  status: "failed" | "partial_failed" | "skipped" | "success";
+  targetCount: number;
+};
+
+export type CronHistoryItemKind = "check_unconfirmed_messages" | "delete_expired_messages" | "send_daily_message";
 
 export type CronHistoryItemView = {
   finishedAt: null | string;

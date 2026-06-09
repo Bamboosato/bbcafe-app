@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { CronRunView, SendRunView } from "../types";
+import type { ConfirmationReminderRunView, CronRunView, SendRunView } from "../types";
 import { buildCronHistoryItems } from "./cronHistory";
 
 describe("buildCronHistoryItems", () => {
-  it("combines auto delete and auto send runs in startedAt descending order", () => {
+  it("combines auto delete, auto send, and unconfirmed check runs in startedAt descending order", () => {
     const deleteRuns: CronRunView[] = [
       {
         deletedCount: 2,
@@ -20,8 +20,21 @@ describe("buildCronHistoryItems", () => {
       sendRun({ mode: "manual", runId: "manual_1", startedAt: "2026-06-08T00:00:00.000Z" }),
       sendRun({ mode: "auto", runId: "auto_1", startedAt: "2026-06-08T22:00:00.000Z" }),
     ];
+    const reminderRuns: ConfirmationReminderRunView[] = [
+      {
+        failedCount: 0,
+        finishedAt: "2026-06-08T04:00:02.000Z",
+        lineAccountId: "default",
+        notifiedCount: 1,
+        runId: "confirm_1",
+        skippedReason: null,
+        startedAt: "2026-06-08T04:00:00.000Z",
+        status: "success",
+        targetCount: 2,
+      },
+    ];
 
-    expect(buildCronHistoryItems({ deleteRuns, sendRuns })).toEqual([
+    expect(buildCronHistoryItems({ deleteRuns, reminderRuns, sendRuns })).toEqual([
       {
         finishedAt: "2026-06-08T22:00:03.000Z",
         id: "auto_1",
@@ -29,6 +42,14 @@ describe("buildCronHistoryItems", () => {
         startedAt: "2026-06-08T22:00:00.000Z",
         status: "success",
         summary: "成功 3件 / 失敗 0件 / 対象 3件",
+      },
+      {
+        finishedAt: "2026-06-08T04:00:02.000Z",
+        id: "confirm_1",
+        kind: "check_unconfirmed_messages",
+        startedAt: "2026-06-08T04:00:00.000Z",
+        status: "success",
+        summary: "対象 2件 / 通知 1件 / 失敗 0件",
       },
       {
         finishedAt: "2026-06-08T03:00:05.000Z",
