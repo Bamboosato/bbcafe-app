@@ -1,8 +1,9 @@
 import { DEFAULT_LINE_ACCOUNT_ID, getLineAccount } from "@/features/messages/server/lineAccounts";
 import {
+  buildConfirmationCheckSnapshot,
   buildUnconfirmedReminderPushBody,
   createConfirmationReminderRunId,
-  listPendingConfirmationTargets,
+  listConfirmationTargets,
   markReminderSentForTargets,
   saveConfirmationReminderRun,
 } from "@/features/messages/server/confirmations";
@@ -38,35 +39,64 @@ export async function GET(request: Request) {
   try {
     const [account, targets] = await Promise.all([
       getLineAccount(lineAccountId),
-      listPendingConfirmationTargets(lineAccountId),
+      listConfirmationTargets(lineAccountId),
     ]);
+    const checkSnapshot = buildConfirmationCheckSnapshot(targets);
+    const pendingTargets = targets.filter((target) => target.status === "pending");
 
     if (!targets.length) {
       await saveConfirmationReminderRun({
+        confirmedCount: 0,
+        confirmedTargets: [],
         failedCount: 0,
         finishedAt: new Date(),
         lineAccountId,
         notifiedCount: 0,
         runId,
-        skippedReason: "no_pending_targets",
+        skippedReason: "no_confirmation_targets",
         startedAt,
         status: "skipped",
         targetCount: 0,
+        unconfirmedCount: 0,
+        unconfirmedTargets: [],
       });
 
-      return jsonData({ remindedCount: 0, runId, skipped: "no_pending_targets" }, requestId);
+      return jsonData({ remindedCount: 0, runId, skipped: "no_confirmation_targets" }, requestId);
     }
 
-    const body = buildUnconfirmedReminderPushBody(targets);
+    if (!pendingTargets.length) {
+      await saveConfirmationReminderRun({
+        ...checkSnapshot,
+        failedCount: 0,
+        finishedAt: new Date(),
+        lineAccountId,
+        notifiedCount: 0,
+        runId,
+        skippedReason: null,
+        startedAt,
+        status: "success",
+      });
+
+      return jsonData({
+        confirmedCount: checkSnapshot.confirmedCount,
+        remindedCount: 0,
+        runId,
+        targetCount: checkSnapshot.targetCount,
+        unconfirmedCount: checkSnapshot.unconfirmedCount,
+      }, requestId);
+    }
+
+    const body = buildUnconfirmedReminderPushBody(pendingTargets);
     const pushResult = await sendPushNotificationsToViewers({
       lineAccountId,
       payload: buildUnconfirmedMessageReminderPushPayload(body),
       viewerSharedId: account.viewerSharedId,
     });
-    const remindedCount = pushResult.skipped ? 0 : await markReminderSentForTargets(lineAccountId, targets);
+    const remindedCount = pushResult.skipped ? 0 : await markReminderSentForTargets(lineAccountId, pendingTargets);
     const status = toReminderRunStatus(pushResult);
 
     await saveConfirmationReminderRun({
+      ...checkSnapshot,
       failedCount: pushResult.failed,
       finishedAt: new Date(),
       lineAccountId,
@@ -75,14 +105,15 @@ export async function GET(request: Request) {
       skippedReason: pushResult.skipped,
       startedAt,
       status,
-      targetCount: targets.length,
     });
 
     return jsonData({
+      confirmedCount: checkSnapshot.confirmedCount,
       pushResult,
       remindedCount,
       runId,
-      targetCount: targets.length,
+      targetCount: checkSnapshot.targetCount,
+      unconfirmedCount: checkSnapshot.unconfirmedCount,
     }, requestId);
   } catch (error) {
     console.error("[cron-check-unconfirmed-messages] failed", {
@@ -92,6 +123,8 @@ export async function GET(request: Request) {
     });
 
     await saveConfirmationReminderRun({
+      confirmedCount: 0,
+      confirmedTargets: [],
       failedCount: 1,
       finishedAt: new Date(),
       lineAccountId,
@@ -101,6 +134,8 @@ export async function GET(request: Request) {
       startedAt,
       status: "failed",
       targetCount: 0,
+      unconfirmedCount: 0,
+      unconfirmedTargets: [],
     }).catch((writeError) => {
       console.error("[cron-check-unconfirmed-messages] failed to save run", {
         message: writeError instanceof Error ? writeError.message : String(writeError),

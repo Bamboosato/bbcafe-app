@@ -103,7 +103,17 @@ export type CronRunView = {
   status: "failed" | "skipped" | "success";
 };
 
+export type ConfirmationCheckTargetView = {
+  confirmedAt: null | string;
+  reminderSentAt: null | string;
+  status: "confirmed" | "unconfirmed";
+  userId: string;
+  userName: string;
+};
+
 export type ConfirmationReminderRunView = {
+  confirmedCount: number;
+  confirmedTargets: ConfirmationCheckTargetView[];
   failedCount: number;
   finishedAt: null | string;
   lineAccountId: string;
@@ -113,15 +123,21 @@ export type ConfirmationReminderRunView = {
   startedAt: string;
   status: "failed" | "partial_failed" | "skipped" | "success";
   targetCount: number;
+  unconfirmedCount: number;
+  unconfirmedTargets: ConfirmationCheckTargetView[];
 };
 
 export type CronHistoryItemKind = "check_unconfirmed_messages" | "delete_expired_messages" | "send_daily_message";
 
 export type CronHistoryItemView = {
+  confirmedCount?: number;
+  confirmedTargets?: ConfirmationCheckTargetView[];
   finishedAt: null | string;
   id: string;
   kind: CronHistoryItemKind;
   startedAt: string;
   status: string;
   summary: string;
+  unconfirmedCount?: number;
+  unconfirmedTargets?: ConfirmationCheckTargetView[];
 };
