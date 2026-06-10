@@ -1046,11 +1046,15 @@ label {
   .settings-header,
   .cron-history-header {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: stretch;
   }
 
   .settings-actions {
     display: grid;
+    grid-column: 1 / -1;
     grid-template-columns: minmax(0, 1fr) auto;
+    justify-self: stretch;
   }
 
   .cron-history-actions,
@@ -1098,11 +1102,15 @@ label {
 
   .user-info-header {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: stretch;
   }
 
   .user-info-actions {
     display: grid;
+    grid-column: 1 / -1;
     grid-template-columns: minmax(0, 1fr) auto;
+    justify-self: stretch;
   }
 }
 
