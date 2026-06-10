@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getPackageVersion } from "@/lib/app-version";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,12 +15,14 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const packageVersion = getPackageVersion();
+
   return (
     <html lang="ja">
       <body>
         <div className="site-frame">
           {children}
-          <footer className="app-footer">© 2026 Bamboosato v1.0.0</footer>
+          <footer className="app-footer">© 2026 Bamboosato v{packageVersion}</footer>
         </div>
       </body>
     </html>
