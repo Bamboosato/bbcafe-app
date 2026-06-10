@@ -1084,7 +1084,7 @@ export default function ViewerApp({
       <header className="app-header">
         <div className="app-title">
           <h1>BB Cafe Messages</h1>
-          <p>LINE公式アカウントへ届いたテキストメッセージ</p>
+          <p>LINE公式アカウントのメッセージ履歴と配信管理</p>
         </div>
         <div className="admin-actions">
           <div className="account-menu" ref={accountMenuRef}>
