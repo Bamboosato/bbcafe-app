@@ -1,24 +1,24 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
-function requiredPublicEnv(name: string) {
-  const value = process.env[name]?.trim();
+function requiredPublicEnv(value: string | undefined, name: string) {
+  const normalizedValue = value?.trim();
 
-  if (!value) {
+  if (!normalizedValue) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
 
-  return value;
+  return normalizedValue;
 }
 
 export function getClientAuth() {
   const app =
     getApps()[0] ??
     initializeApp({
-      apiKey: requiredPublicEnv("NEXT_PUBLIC_FIREBASE_API_KEY"),
+      apiKey: requiredPublicEnv(process.env.NEXT_PUBLIC_FIREBASE_API_KEY, "NEXT_PUBLIC_FIREBASE_API_KEY"),
       appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim(),
-      authDomain: requiredPublicEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
-      projectId: requiredPublicEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
+      authDomain: requiredPublicEnv(process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN, "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
+      projectId: requiredPublicEnv(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID, "NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
     });
 
   return getAuth(app);
