@@ -55,12 +55,11 @@ export async function PATCH(request: Request) {
     const channelAccessToken = pickString(body, "channelAccessToken")?.trim();
     const channelId = pickString(body, "channelId")?.trim();
     const channelSecret = pickString(body, "channelSecret")?.trim();
-    const displayName = pickString(body, "displayName")?.trim();
     const receivedRetentionDays = pickPositiveInteger(body, "receivedRetentionDays");
     const sentRetentionDays = pickPositiveInteger(body, "sentRetentionDays");
     const credentialsProvided = Boolean(channelSecret || channelAccessToken);
 
-    if (!displayName || !channelId || !receivedRetentionDays || !sentRetentionDays) {
+    if (!channelId || !receivedRetentionDays || !sentRetentionDays) {
       return jsonError(400, "VALIDATION_ERROR", "共通設定の値が正しくありません。", requestId);
     }
 
@@ -70,16 +69,29 @@ export async function PATCH(request: Request) {
 
     let accessTokenValidatedAt: Date | undefined;
     const nextChannelId = channelId ?? "";
+    const currentAccount = await getLineAccount(auth.payload.lineAccountId);
+    const channelIdChanged = hasChannelIdChanged(currentAccount.channelId, nextChannelId);
+    let nextDisplayName = currentAccount.displayName;
+
+    if (channelIdChanged && !credentialsProvided) {
+      return jsonError(
+        400,
+        "VALIDATION_ERROR",
+        "チャンネルIDを変更する場合はChannel SecretとChannel Access Tokenを入力してください。",
+        requestId,
+      );
+    }
 
     if (credentialsProvided) {
       const nextChannelAccessToken = channelAccessToken ?? "";
       const nextChannelSecret = channelSecret ?? "";
 
-      await validateLineCredentialInput({
+      const botInfo = await validateLineCredentialInput({
         channelAccessToken: nextChannelAccessToken,
         channelId: nextChannelId,
         channelSecret: nextChannelSecret,
       });
+      nextDisplayName = botInfo.displayName;
       await saveEncryptedLineCredentials({
         channelAccessToken: nextChannelAccessToken,
         channelSecret: nextChannelSecret,
@@ -93,7 +105,7 @@ export async function PATCH(request: Request) {
         accessTokenValidatedAt,
         channelId: nextChannelId,
         credentialProvider: credentialsProvided ? "encryptedFirestore" : undefined,
-        displayName,
+        displayName: nextDisplayName || nextChannelId,
         lineAccountId: auth.payload.lineAccountId,
         retentionDays: receivedRetentionDays,
       }),
@@ -117,6 +129,10 @@ export async function PATCH(request: Request) {
       return jsonError(400, "VALIDATION_ERROR", "Channel Access Tokenを検証できません。", requestId);
     }
 
+    if (error instanceof Error && error.message === "INVALID_LINE_BOT_INFO") {
+      return jsonError(400, "VALIDATION_ERROR", "LINE側のチャンネル名を取得できません。", requestId);
+    }
+
     console.error("[common-settings-patch] failed", {
       message: error instanceof Error ? error.message : String(error),
       requestId,
@@ -129,7 +145,10 @@ export async function PATCH(request: Request) {
 function toCommonSettingsView(
   account: {
     accessTokenValidatedAt: null | string;
+    channelAccessTokenRef: string;
     channelId: string;
+    channelSecretRef: string;
+    credentialProvider: "encryptedFirestore" | "env";
     displayName: string;
     lineAccountId: string;
     retentionDays: number;
@@ -137,15 +156,44 @@ function toCommonSettingsView(
   },
   sentRetentionDays: number,
 ): CommonSettingsView {
+  const channelAccessTokenConfigured = isCredentialConfigured(
+    account.credentialProvider,
+    account.accessTokenValidatedAt,
+    account.channelAccessTokenRef,
+  );
+  const channelSecretConfigured = isCredentialConfigured(
+    account.credentialProvider,
+    account.accessTokenValidatedAt,
+    account.channelSecretRef,
+  );
+
   return {
     accessTokenValidatedAt: account.accessTokenValidatedAt,
+    channelAccessTokenConfigured,
     channelId: account.channelId,
+    channelSecretConfigured,
     displayName: account.displayName,
     lineAccountId: account.lineAccountId,
     receivedRetentionDays: account.retentionDays,
     sentRetentionDays,
     webhookUrlPath: `/api/line/webhook/${account.lineAccountId}`,
   };
+}
+
+export function isCredentialConfigured(
+  credentialProvider: "encryptedFirestore" | "env",
+  accessTokenValidatedAt: null | string,
+  credentialRef: string,
+) {
+  if (credentialProvider === "encryptedFirestore") {
+    return Boolean(accessTokenValidatedAt);
+  }
+
+  return Boolean(credentialRef && process.env[credentialRef]?.trim());
+}
+
+export function hasChannelIdChanged(currentChannelId: string, nextChannelId: string) {
+  return currentChannelId.trim() !== nextChannelId.trim();
 }
 
 function pickString(value: unknown, key: string) {

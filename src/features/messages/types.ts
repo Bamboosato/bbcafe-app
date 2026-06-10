@@ -14,7 +14,9 @@ export type LineAccountView = {
 
 export type CommonSettingsView = {
   accessTokenValidatedAt: null | string;
+  channelAccessTokenConfigured: boolean;
   channelId: string;
+  channelSecretConfigured: boolean;
   displayName: string;
   lineAccountId: string;
   receivedRetentionDays: number;

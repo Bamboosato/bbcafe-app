@@ -85,6 +85,12 @@ input {
   width: 100%;
 }
 
+input[readonly] {
+  background: var(--surface);
+  color: var(--muted);
+  cursor: default;
+}
+
 label {
   color: var(--muted);
   display: grid;
@@ -313,17 +319,70 @@ label {
   grid-column: 1 / -1;
 }
 
-.settings-note {
-  align-items: center;
+.settings-disclosure {
+  background: #ffffff;
   border: 1px solid var(--border);
   border-radius: 8px;
+  overflow: hidden;
+}
+
+.settings-disclosure summary {
+  align-items: center;
+  color: var(--foreground);
+  cursor: pointer;
   display: flex;
-  justify-content: space-between;
+  font-weight: 700;
+  gap: 8px;
+  list-style: none;
+  min-height: 48px;
   padding: 12px 14px;
 }
 
-.settings-note span {
+.settings-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-disclosure summary::before {
   color: var(--muted);
+  content: "▶";
+  font-size: 12px;
+  line-height: 1;
+  width: 14px;
+}
+
+.settings-disclosure[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-disclosure[open] summary::before {
+  content: "▼";
+}
+
+.line-settings-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 14px;
+}
+
+.line-settings-grid .full {
+  grid-column: 1 / -1;
+}
+
+.readonly-value {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: default;
+  display: flex;
+  line-height: 1.5;
+  min-height: 40px;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  user-select: text;
+  width: 100%;
 }
 
 .table-like {
@@ -334,9 +393,15 @@ label {
 .admin-actions {
   align-items: flex-start;
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   gap: 10px;
   margin-left: auto;
+}
+
+.account-menu,
+.nav-menu {
+  flex: 0 0 auto;
 }
 
 .app-tabs {
@@ -703,6 +768,10 @@ label {
   gap: 14px;
 }
 
+.sent-history-screen .message-list-toolbar {
+  grid-area: auto;
+}
+
 .sent-history-header,
 .settings-header,
 .cron-history-header {
@@ -720,6 +789,7 @@ label {
   margin: 0 0 4px;
 }
 
+.cron-history-actions,
 .sent-history-actions {
   align-items: center;
   display: flex;
@@ -727,7 +797,19 @@ label {
   justify-content: flex-end;
 }
 
+.settings-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.cron-history-actions .status-text,
 .sent-history-actions .status-text {
+  text-align: right;
+}
+
+.settings-actions .status-text {
   text-align: right;
 }
 
@@ -884,10 +966,15 @@ label {
 }
 
 .user-info-actions {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   justify-content: flex-end;
+}
+
+.user-info-actions .status-text {
+  text-align: right;
 }
 
 .user-info-list {
@@ -961,26 +1048,50 @@ label {
     display: grid;
   }
 
-  .settings-header button,
-  .cron-history-header button {
-    width: 100%;
+  .settings-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  .cron-history-actions,
   .sent-history-actions {
     justify-content: stretch;
     width: 100%;
   }
 
+  .settings-actions,
+  .user-info-actions {
+    align-items: center;
+    justify-content: normal;
+    width: 100%;
+  }
+
+  .cron-history-actions .status-text,
   .sent-history-actions .status-text {
     flex: 1 1 auto;
     text-align: left;
   }
 
+  .settings-actions .status-text,
+  .user-info-actions .status-text {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .cron-history-actions button,
   .sent-history-actions button {
     flex: 0 0 auto;
   }
 
+  .settings-actions button,
+  .user-info-actions button {
+    flex: 0 0 auto;
+    justify-self: end;
+  }
+
+  .line-settings-grid,
   .send-run-detail-meta,
+  .settings-grid,
   .automation-settings-grid {
     grid-template-columns: 1fr;
   }
@@ -990,11 +1101,8 @@ label {
   }
 
   .user-info-actions {
-    justify-content: stretch;
-  }
-
-  .user-info-actions button {
-    flex: 1 1 140px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 
@@ -1028,7 +1136,6 @@ textarea {
   margin: 0 0 4px;
 }
 
-.generated-message-actions,
 .generated-message-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -1042,19 +1149,27 @@ textarea {
 }
 
 .generated-message-targets {
+  align-items: center;
   background: var(--surface);
   border-radius: 8px;
   display: grid;
-  gap: 4px;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
   padding: 12px;
 }
 
-.generated-message-targets span {
+.generated-message-target-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.generated-message-target-copy span {
   color: var(--muted);
   font-size: 12px;
 }
 
-.generated-message-targets strong {
+.generated-message-target-copy strong {
   overflow-wrap: anywhere;
 }
 
@@ -1085,14 +1200,20 @@ textarea {
     display: grid;
   }
 
-  .generated-message-actions,
   .generated-message-toolbar {
     justify-content: stretch;
   }
 
-  .generated-message-actions button,
   .generated-message-toolbar button {
     flex: 1 1 140px;
+  }
+
+  .generated-message-targets {
+    grid-template-columns: 1fr;
+  }
+
+  .generated-message-targets button {
+    width: 100%;
   }
 
   .automation-settings-header {

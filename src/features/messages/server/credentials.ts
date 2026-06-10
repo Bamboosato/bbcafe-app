@@ -10,6 +10,10 @@ export type LineCredentials = {
   lineAccountId: string;
 };
 
+export type LineBotInfo = {
+  displayName: string;
+};
+
 export async function getLineCredentials(lineAccountId: string): Promise<LineCredentials> {
   const account = await getLineAccount(lineAccountId);
 
@@ -85,7 +89,7 @@ export async function validateLineCredentialInput({
   channelAccessToken: string;
   channelId: string;
   channelSecret: string;
-}) {
+}): Promise<LineBotInfo> {
   if (!channelId.trim() || !channelSecret.trim() || !channelAccessToken.trim()) {
     throw new Error("INVALID_LINE_CREDENTIALS");
   }
@@ -99,4 +103,13 @@ export async function validateLineCredentialInput({
   if (!response.ok) {
     throw new Error("INVALID_LINE_ACCESS_TOKEN");
   }
+
+  const data = (await response.json().catch(() => null)) as { displayName?: unknown } | null;
+  const displayName = typeof data?.displayName === "string" ? data.displayName.trim() : "";
+
+  if (!displayName) {
+    throw new Error("INVALID_LINE_BOT_INFO");
+  }
+
+  return { displayName };
 }

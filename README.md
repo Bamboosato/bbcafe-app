@@ -70,6 +70,29 @@ npx firebase-tools deploy --only firestore:indexes --project bbcafe-app
 
 `firebase.json` は `firestore.indexes.json` を参照しています。index作成中は同じエラーが続くことがあるため、Firebase Consoleで作成完了を確認してからCronを再実行してください。
 
+## Cronの手動実行
+
+Vercelに登録済みのCronは、Vercel CLIから手動実行できます。
+
+確認チェックCron:
+
+```bash
+npx vercel crons run /api/cron/check-unconfirmed-messages
+```
+
+確認チェックCronは、未確認者がいる場合に通知を送信し、Cron履歴へ実行結果を保存します。通知送信を伴うため、実行前に未確認対象が残っている前提で扱ってください。
+
+ほかのCronを手動実行する場合は、以下のpathを指定します。
+
+```bash
+npx vercel crons run /api/cron/send-daily-message
+npx vercel crons run /api/cron/delete-expired-messages
+```
+
+`send-daily-message` は当日分が未送信の場合にLINE配信を実行します。`delete-expired-messages` は保存期間外の履歴を削除します。
+
+`vercel crons run` が使えない場合やDeployment Protectionの影響を受ける場合は、Vercel CLIで認証済みの状態で `npx vercel curl` を使ってください。直接HTTPで呼び出す場合は `Authorization: Bearer <CRON_SECRET>` が必要です。
+
 ## LINE Webhook URL
 
 Production:

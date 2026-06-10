@@ -15,6 +15,11 @@ import {
   MESSAGE_FILTER_OPTIONS,
   type MessageFilter,
 } from "@/features/messages/messageFilter";
+import {
+  filterSendRuns,
+  SEND_RUN_FILTER_OPTIONS,
+  type SendRunFilter,
+} from "@/features/messages/sendRunFilter";
 import { getClientAuth } from "@/lib/firebaseClient";
 import type {
   AutomationSettingsView,
@@ -120,6 +125,7 @@ export default function ViewerApp({
   const [commonSettingsChannelSecret, setCommonSettingsChannelSecret] = useState("");
   const [cronHistoryItems, setCronHistoryItems] = useState<CronHistoryItemView[]>([]);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
+  const [sendRunFilter, setSendRunFilter] = useState<SendRunFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
   const [selectedSendRun, setSelectedSendRun] = useState<SendRunView | null>(null);
   const [generatedMessage, setGeneratedMessage] = useState("");
@@ -157,6 +163,7 @@ export default function ViewerApp({
 
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
+  const filteredSentRuns = useMemo(() => filterSendRuns(sentRuns, sendRunFilter), [sentRuns, sendRunFilter]);
   const selectedUsers = useMemo(
     () => users.filter((user) => user.broadcastSelected),
     [users],
@@ -228,7 +235,7 @@ export default function ViewerApp({
       }
 
       setUsers(result.data?.users ?? []);
-      setStatus(`ユーザ情報の最終更新: ${formatTime(new Date().toISOString())}`);
+      setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
     } finally {
       loadingUsersRef.current = false;
       setLoadingUsers(false);
@@ -303,7 +310,7 @@ export default function ViewerApp({
       const nextSettings = result.data?.settings ?? null;
       setCommonSettings(nextSettings);
 
-      setStatus(`共通設定の最終更新: ${formatTime(new Date().toISOString())}`);
+      setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
     } finally {
       loadingCommonSettingsRef.current = false;
       setLoadingCommonSettings(false);
@@ -330,7 +337,7 @@ export default function ViewerApp({
       }
 
       setCronHistoryItems(result.data?.items ?? []);
-      setStatus(`Cron履歴の最終更新: ${formatTime(new Date().toISOString())}`);
+      setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
     } finally {
       loadingCronHistoryRef.current = false;
       setLoadingCronHistory(false);
@@ -351,10 +358,6 @@ export default function ViewerApp({
 
   function showGeneratedMessageView() {
     navigateToView("generated-message");
-  }
-
-  function showMessageView() {
-    navigateToView("messages");
   }
 
   const refreshVisibleMessages = useCallback(() => {
@@ -944,7 +947,6 @@ export default function ViewerApp({
           channelAccessToken: commonSettingsChannelAccessToken.trim() || undefined,
           channelId: commonSettings.channelId,
           channelSecret: commonSettingsChannelSecret.trim() || undefined,
-          displayName: commonSettings.displayName,
           receivedRetentionDays: commonSettings.receivedRetentionDays,
           sentRetentionDays: commonSettings.sentRetentionDays,
         }),
@@ -1181,7 +1183,6 @@ export default function ViewerApp({
       {currentView === "users" ? (
         <UserInfoScreen
           loading={loadingUsers}
-          onBack={showMessageView}
           onRefresh={() => void loadUsers()}
           onSelectionChange={handleUserSelectionChange}
           selectedUserIds={selectedUserIds}
@@ -1192,11 +1193,14 @@ export default function ViewerApp({
 
       {currentView === "sent" ? (
         <SentHistoryScreen
+          filter={sendRunFilter}
           loading={loadingSentRuns}
+          onFilterChange={setSendRunFilter}
           onRefresh={() => void loadSentRuns()}
           onSelect={(run) => void handleSelectSendRun(run)}
-          runs={sentRuns}
+          runs={filteredSentRuns}
           statusText={status || "送信履歴を表示します。"}
+          totalCount={sentRuns.length}
         />
       ) : null}
 
@@ -1208,7 +1212,6 @@ export default function ViewerApp({
           message={generatedMessage}
           location={generatedMessageLocation}
           onAutomationEnabledChange={(enabled) => void handleAutomationEnabledChange(enabled)}
-          onBack={showMessageView}
           onGenerate={() => void handleGenerateMessage()}
           onMessageChange={setGeneratedMessage}
           onOpenUsers={showUserInfoView}
@@ -1353,36 +1356,28 @@ function CommonSettingsScreen({
   settings: CommonSettingsView | null;
   statusText: string;
 }) {
+  const channelSecretPlaceholder = settings?.channelSecretConfigured ? "****" : "未設定";
+  const channelAccessTokenPlaceholder = settings?.channelAccessTokenConfigured ? "****" : "未設定";
+
   return (
     <section className="settings-screen">
       <div className="settings-header">
         <div>
           <h2>管理画面</h2>
-          <p className="status-text">{loading ? "管理画面を更新中です。" : statusText}</p>
         </div>
+        {settings ? (
+          <div className="settings-actions">
+            <p className="status-text">{loading ? "管理画面を更新中です。" : statusText}</p>
+            <button aria-busy={saving} disabled={saving} form="common-settings-form" type="submit">
+              保存
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {settings ? (
         <section className="panel">
-          <form className="settings-grid" onSubmit={onSubmit}>
-            <label className="full">
-              チャンネル名
-              <input
-                onChange={(event) => onChange("displayName", event.target.value)}
-                value={settings.displayName}
-              />
-            </label>
-            <label>
-              チャンネルID
-              <input
-                onChange={(event) => onChange("channelId", event.target.value)}
-                value={settings.channelId}
-              />
-            </label>
-            <label>
-              Webhook
-              <input readOnly value={settings.webhookUrlPath} />
-            </label>
+          <form className="settings-grid" id="common-settings-form" onSubmit={onSubmit}>
             <label>
               保存期間（受信）
               <input
@@ -1401,35 +1396,47 @@ function CommonSettingsScreen({
                 value={settings.sentRetentionDays}
               />
             </label>
-            <label>
-              Channel Secret
-              <input
-                autoComplete="off"
-                onChange={(event) => onChannelSecretChange(event.target.value)}
-                placeholder="変更する場合のみ入力"
-                type="password"
-                value={channelSecret}
-              />
-            </label>
-            <label>
-              Channel Access Token
-              <input
-                autoComplete="off"
-                onChange={(event) => onChannelAccessTokenChange(event.target.value)}
-                placeholder="変更する場合のみ入力"
-                type="password"
-                value={channelAccessToken}
-              />
-            </label>
-            <div className="full settings-note">
-              <span>Access Token検証</span>
-              <strong>{settings.accessTokenValidatedAt ? formatTime(settings.accessTokenValidatedAt) : "未検証"}</strong>
-            </div>
-            <div className="full">
-              <button disabled={saving} type="submit">
-                {saving ? "保存中..." : "設定を保存"}
-              </button>
-            </div>
+            <details className="full settings-disclosure">
+              <summary>LINE連携情報</summary>
+              <div className="line-settings-grid">
+                <label>
+                  チャンネルID
+                  <input
+                    onChange={(event) => onChange("channelId", event.target.value)}
+                    placeholder="LINE DevelopersのチャンネルID"
+                    value={settings.channelId}
+                  />
+                </label>
+                <label>
+                  チャンネル名
+                  <span className="readonly-value">{settings.displayName || "未取得"}</span>
+                </label>
+                <label>
+                  Webhook URL
+                  <span className="readonly-value">{settings.webhookUrlPath}</span>
+                </label>
+                <label>
+                  Channel Secret（変更する場合のみ入力）
+                  <input
+                    autoComplete="off"
+                    onChange={(event) => onChannelSecretChange(event.target.value)}
+                    placeholder={channelSecretPlaceholder}
+                    type="password"
+                    value={channelSecret}
+                  />
+                </label>
+                <label>
+                  Channel Access Token（変更する場合のみ入力）
+                  <input
+                    autoComplete="off"
+                    onChange={(event) => onChannelAccessTokenChange(event.target.value)}
+                    placeholder={channelAccessTokenPlaceholder}
+                    type="password"
+                    value={channelAccessToken}
+                  />
+                </label>
+              </div>
+            </details>
           </form>
         </section>
       ) : (
@@ -1457,11 +1464,13 @@ function CronHistoryScreen({
       <div className="cron-history-header">
         <div>
           <h2>Cron履歴</h2>
-          <p className="status-text">{loading ? "Cron履歴を更新中です。" : statusText}</p>
         </div>
-        <button onClick={onRefresh} type="button" disabled={loading}>
-          更新
-        </button>
+        <div className="cron-history-actions">
+          <p className="status-text">{loading ? "Cron履歴を更新中です。" : statusText}</p>
+          <button onClick={onRefresh} type="button" disabled={loading}>
+            更新
+          </button>
+        </div>
       </div>
 
       {items.length ? (
@@ -1498,7 +1507,6 @@ function CronHistoryScreen({
 
 function UserInfoScreen({
   loading,
-  onBack,
   onRefresh,
   onSelectionChange,
   selectedUserIds,
@@ -1506,7 +1514,6 @@ function UserInfoScreen({
   users,
 }: {
   loading: boolean;
-  onBack: () => void;
   onRefresh: () => void;
   onSelectionChange: (userId: string, selected: boolean) => void;
   selectedUserIds: string[];
@@ -1518,12 +1525,9 @@ function UserInfoScreen({
       <div className="user-info-header">
         <div>
           <h2>ユーザ情報</h2>
-          <p className="status-text">{loading ? "ユーザ情報を更新中です。" : statusText}</p>
         </div>
         <div className="user-info-actions">
-          <button className="secondary" onClick={onBack} type="button">
-            メッセージへ戻る
-          </button>
+          <p className="status-text">{loading ? "ユーザ情報を更新中です。" : statusText}</p>
           <button onClick={onRefresh} type="button" disabled={loading}>
             更新
           </button>
@@ -1572,23 +1576,39 @@ function UserInfoScreen({
 }
 
 function SentHistoryScreen({
+  filter,
   loading,
+  onFilterChange,
   onRefresh,
   onSelect,
   runs,
   statusText,
+  totalCount,
 }: {
+  filter: SendRunFilter;
   loading: boolean;
+  onFilterChange: (filter: SendRunFilter) => void;
   onRefresh: () => void;
   onSelect: (run: SendRunView) => void;
   runs: SendRunView[];
   statusText: string;
+  totalCount: number;
 }) {
   return (
-    <section className="sent-history-screen">
-      <div className="sent-history-header">
-        <div>
-          <h2>送信履歴</h2>
+    <section aria-label="送信履歴" className="sent-history-screen">
+      <div className="message-list-toolbar">
+        <div aria-label="送信種別フィルター" className="message-filter" role="group">
+          {SEND_RUN_FILTER_OPTIONS.map((option) => (
+            <button
+              aria-pressed={option.value === filter}
+              className={`filter-button ${option.value === filter ? "active" : ""}`}
+              key={option.value}
+              onClick={() => onFilterChange(option.value)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
         <div className="sent-history-actions">
           <p className="status-text">{loading ? "送信履歴を更新中です。" : statusText}</p>
@@ -1615,7 +1635,9 @@ function SentHistoryScreen({
           ))}
         </div>
       ) : (
-        <div className="panel empty-message-panel">送信履歴はありません。</div>
+        <div className="panel empty-message-panel">
+          {totalCount ? "このフィルターに該当する送信履歴はありません。" : "送信履歴はありません。"}
+        </div>
       )}
     </section>
   );
@@ -1629,7 +1651,6 @@ function GeneratedMessageScreen({
   location,
   message,
   onAutomationEnabledChange,
-  onBack,
   onGenerate,
   onMessageChange,
   onOpenUsers,
@@ -1645,7 +1666,6 @@ function GeneratedMessageScreen({
   location: string;
   message: string;
   onAutomationEnabledChange: (enabled: boolean) => void;
-  onBack: () => void;
   onGenerate: () => void;
   onMessageChange: (message: string) => void;
   onOpenUsers: () => void;
@@ -1666,14 +1686,6 @@ function GeneratedMessageScreen({
             作成ボタンで今日の一言メッセージを自動生成し、選択中のユーザへ送信します。
           </p>
         </div>
-        <div className="generated-message-actions">
-          <button className="secondary" onClick={onBack} type="button">
-            メッセージへ戻る
-          </button>
-          <button className="secondary" disabled={loadingUsers} onClick={onOpenUsers} type="button">
-            {loadingUsers ? "ユーザ情報を読込中..." : "ユーザ情報を選択"}
-          </button>
-        </div>
       </div>
 
       <div className="panel generated-message-panel">
@@ -1691,8 +1703,13 @@ function GeneratedMessageScreen({
         </div>
 
         <div className="generated-message-targets">
-          <span>送信先</span>
-          <strong>{selectedUsers.length ? `${selectedUsers.length}名：${selectedUserNames}` : "未選択"}</strong>
+          <div className="generated-message-target-copy">
+            <span>送信先</span>
+            <strong>{selectedUsers.length ? `${selectedUsers.length}名：${selectedUserNames}` : "未選択"}</strong>
+          </div>
+          <button className="secondary" disabled={loadingUsers} onClick={onOpenUsers} type="button">
+            {loadingUsers ? "ユーザ情報を読込中..." : "ユーザ情報を選択"}
+          </button>
         </div>
 
         {location ? <p className="status-text">対象地域: {location}</p> : null}
