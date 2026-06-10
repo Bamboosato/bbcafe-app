@@ -1,9 +1,18 @@
 import crypto from "node:crypto";
 
 export const ADMIN_SESSION_COOKIE = "bbcafe_admin";
+export const ACCOUNT_SESSION_COOKIE = "bbcafe_auth_v2";
 export const VIEWER_SESSION_COOKIE = "bbcafe_viewer";
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24;
+
+export type AccountSessionPayload = {
+  email: string;
+  exp: number;
+  lineAccountId: string;
+  role: "account";
+  uid: string;
+};
 
 export type AdminSessionPayload = {
   exp: number;
@@ -17,7 +26,7 @@ export type ViewerSessionPayload = {
   viewerSharedId?: string;
 };
 
-type SessionPayload = AdminSessionPayload | ViewerSessionPayload;
+type SessionPayload = AccountSessionPayload | AdminSessionPayload | ViewerSessionPayload;
 
 function requiredSessionSecret() {
   const value = process.env.SESSION_SECRET?.trim();
@@ -43,6 +52,29 @@ export function createAdminSessionCookieValue(now = Date.now()) {
   );
 }
 
+export function createAccountSessionCookieValue({
+  email,
+  lineAccountId,
+  now = Date.now(),
+  uid,
+}: {
+  email: string;
+  lineAccountId: string;
+  now?: number;
+  uid: string;
+}) {
+  return createSessionCookieValue(
+    {
+      email,
+      exp: Math.floor(now / 1000) + SESSION_TTL_SECONDS,
+      lineAccountId,
+      role: "account",
+      uid,
+    },
+    requiredSessionSecret(),
+  );
+}
+
 export function createViewerSessionCookieValue(lineAccountId: string, now = Date.now(), viewerSharedId?: string) {
   return createSessionCookieValue(
     {
@@ -59,6 +91,12 @@ export function verifyAdminSessionCookie(value: string | undefined | null, now =
   const payload = verifySessionCookie(value, now);
 
   return payload?.role === "admin" ? payload : null;
+}
+
+export function verifyAccountSessionCookie(value: string | undefined | null, now = Date.now()) {
+  const payload = verifySessionCookie(value, now);
+
+  return payload?.role === "account" ? payload : null;
 }
 
 export function verifyViewerSessionCookie(value: string | undefined | null, now = Date.now()) {
@@ -85,6 +123,16 @@ export function clearSessionCookieOptions() {
     sameSite: "lax" as const,
     secure: process.env.NODE_ENV === "production",
   };
+}
+
+export function clearAppSessionCookies(response: {
+  cookies: {
+    set: (name: string, value: string, options: ReturnType<typeof clearSessionCookieOptions>) => void;
+  };
+}) {
+  response.cookies.set(ACCOUNT_SESSION_COOKIE, "", clearSessionCookieOptions());
+  response.cookies.set(ADMIN_SESSION_COOKIE, "", clearSessionCookieOptions());
+  response.cookies.set(VIEWER_SESSION_COOKIE, "", clearSessionCookieOptions());
 }
 
 export function readCookie(request: Request, name: string) {
@@ -133,6 +181,10 @@ function verifySessionCookie(value: string | undefined | null, now: number) {
 
     if (payload.exp <= Math.floor(now / 1000)) {
       return null;
+    }
+
+    if (payload.role === "account" && payload.uid && payload.lineAccountId) {
+      return payload;
     }
 
     if (payload.role === "admin") {

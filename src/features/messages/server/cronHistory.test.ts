@@ -9,6 +9,7 @@ describe("buildCronHistoryItems", () => {
         deletedCount: 2,
         failedCount: 0,
         finishedAt: "2026-06-08T03:00:05.000Z",
+        lineAccountId: "default",
         protectedCount: 1000,
         runId: "cron_1",
         skippedReason: null,

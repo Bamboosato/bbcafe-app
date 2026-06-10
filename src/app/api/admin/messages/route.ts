@@ -1,7 +1,6 @@
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireAdminSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
-import { DEFAULT_LINE_ACCOUNT_ID } from "@/features/messages/server/lineAccounts";
 import { listVisibleMessages } from "@/features/messages/server/messages";
 
 export const runtime = "nodejs";
@@ -17,7 +16,7 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const limit = Number(url.searchParams.get("limit") ?? 100);
-    const messages = await listVisibleMessages(DEFAULT_LINE_ACCOUNT_ID, limit);
+    const messages = await listVisibleMessages(auth.payload.lineAccountId, limit);
 
     return jsonData({ messages }, requestId);
   } catch (error) {

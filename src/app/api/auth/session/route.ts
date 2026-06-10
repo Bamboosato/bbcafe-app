@@ -1,42 +1,35 @@
-import { jsonData } from "@/lib/server/api-response";
+import { NextResponse } from "next/server";
 import { createRequestId } from "@/lib/server/request";
 import {
+  ACCOUNT_SESSION_COOKIE,
   ADMIN_SESSION_COOKIE,
+  clearSessionCookieOptions,
   readCookie,
-  verifyAdminSessionCookie,
-  verifyViewerSessionCookie,
+  verifyAccountSessionCookie,
   VIEWER_SESSION_COOKIE,
 } from "@/lib/server/session";
-import { DEFAULT_LINE_ACCOUNT_ID, getLineAccount } from "@/features/messages/server/lineAccounts";
+import { getLineAccount } from "@/features/messages/server/lineAccounts";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   const requestId = createRequestId();
-  const adminPayload = verifyAdminSessionCookie(readCookie(request, ADMIN_SESSION_COOKIE));
-  const viewerPayload = verifyViewerSessionCookie(readCookie(request, VIEWER_SESSION_COOKIE));
-
-  if (adminPayload) {
-    const account = viewerPayload?.viewerSharedId ? null : await getLineAccount(DEFAULT_LINE_ACCOUNT_ID);
-
-    return jsonData(
-      {
-        authenticated: true,
-        lineAccountId: viewerPayload?.lineAccountId ?? DEFAULT_LINE_ACCOUNT_ID,
-        role: "admin",
-        viewerSharedId: viewerPayload?.viewerSharedId ?? account?.viewerSharedId ?? null,
-      },
-      requestId,
-    );
-  }
-
-  return jsonData(
-    {
-      authenticated: Boolean(viewerPayload),
-      lineAccountId: viewerPayload?.lineAccountId ?? null,
-      role: viewerPayload ? "viewer" : null,
-      viewerSharedId: viewerPayload?.viewerSharedId ?? null,
+  const payload = verifyAccountSessionCookie(readCookie(request, ACCOUNT_SESSION_COOKIE));
+  const account = payload ? await getLineAccount(payload.lineAccountId).catch(() => null) : null;
+  const response = NextResponse.json({
+    data: {
+      authenticated: Boolean(payload),
+      displayName: account?.displayName ?? null,
+      email: payload?.email ?? null,
+      lineAccountId: payload?.lineAccountId ?? null,
     },
-    requestId,
-  );
+    meta: {
+      requestId,
+    },
+  });
+
+  response.cookies.set(ADMIN_SESSION_COOKIE, "", clearSessionCookieOptions());
+  response.cookies.set(VIEWER_SESSION_COOKIE, "", clearSessionCookieOptions());
+
+  return response;
 }

@@ -1,17 +1,18 @@
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireAdminSession } from "@/lib/server/auth";
-import { createPasswordHash, normalizeLoginId } from "@/lib/server/crypto";
 import { createRequestId, readJsonBody } from "@/lib/server/request";
 import {
   getDailyBroadcastSettings,
   updateDailyBroadcastSettings,
 } from "@/features/messages/server/broadcasts";
 import {
-  DEFAULT_LINE_ACCOUNT_ID,
+  saveEncryptedLineCredentials,
+  validateLineCredentialInput,
+} from "@/features/messages/server/credentials";
+import {
   getLineAccount,
   updateLineAccountSettings,
 } from "@/features/messages/server/lineAccounts";
-import { getConfiguredAdminLoginId } from "@/features/messages/server/login";
 import type { CommonSettingsView } from "@/features/messages/types";
 
 export const runtime = "nodejs";
@@ -26,8 +27,8 @@ export async function GET(request: Request) {
 
   try {
     const [account, automationSettings] = await Promise.all([
-      getLineAccount(DEFAULT_LINE_ACCOUNT_ID),
-      getDailyBroadcastSettings(DEFAULT_LINE_ACCOUNT_ID),
+      getLineAccount(auth.payload.lineAccountId),
+      getDailyBroadcastSettings(auth.payload.lineAccountId),
     ]);
 
     return jsonData({ settings: toCommonSettingsView(account, automationSettings.historyRetentionDays) }, requestId);
@@ -51,31 +52,54 @@ export async function PATCH(request: Request) {
 
   try {
     const body = await readJsonBody(request);
+    const channelAccessToken = pickString(body, "channelAccessToken")?.trim();
+    const channelId = pickString(body, "channelId")?.trim();
+    const channelSecret = pickString(body, "channelSecret")?.trim();
     const displayName = pickString(body, "displayName")?.trim();
-    const viewerSharedId = pickString(body, "viewerSharedId")?.trim();
-    const viewerPassword = pickString(body, "viewerPassword");
     const receivedRetentionDays = pickPositiveInteger(body, "receivedRetentionDays");
     const sentRetentionDays = pickPositiveInteger(body, "sentRetentionDays");
+    const credentialsProvided = Boolean(channelSecret || channelAccessToken);
 
-    if (!displayName || !viewerSharedId || !receivedRetentionDays || !sentRetentionDays) {
+    if (!displayName || !channelId || !receivedRetentionDays || !sentRetentionDays) {
       return jsonError(400, "VALIDATION_ERROR", "共通設定の値が正しくありません。", requestId);
     }
 
-    if (normalizeLoginId(viewerSharedId) === normalizeLoginId(getConfiguredAdminLoginId())) {
-      return jsonError(409, "CONFLICT", "共有IDに管理者IDと同じ値は設定できません。", requestId);
+    if (credentialsProvided && (!channelSecret || !channelAccessToken)) {
+      return jsonError(400, "VALIDATION_ERROR", "Channel SecretとChannel Access Tokenを両方入力してください。", requestId);
+    }
+
+    let accessTokenValidatedAt: Date | undefined;
+    const nextChannelId = channelId ?? "";
+
+    if (credentialsProvided) {
+      const nextChannelAccessToken = channelAccessToken ?? "";
+      const nextChannelSecret = channelSecret ?? "";
+
+      await validateLineCredentialInput({
+        channelAccessToken: nextChannelAccessToken,
+        channelId: nextChannelId,
+        channelSecret: nextChannelSecret,
+      });
+      await saveEncryptedLineCredentials({
+        channelAccessToken: nextChannelAccessToken,
+        channelSecret: nextChannelSecret,
+        lineAccountId: auth.payload.lineAccountId,
+      });
+      accessTokenValidatedAt = new Date();
     }
 
     const [account, automationSettings] = await Promise.all([
       updateLineAccountSettings({
+        accessTokenValidatedAt,
+        channelId: nextChannelId,
+        credentialProvider: credentialsProvided ? "encryptedFirestore" : undefined,
         displayName,
-        lineAccountId: DEFAULT_LINE_ACCOUNT_ID,
+        lineAccountId: auth.payload.lineAccountId,
         retentionDays: receivedRetentionDays,
-        viewerPasswordHash: viewerPassword?.trim() ? createPasswordHash(viewerPassword) : undefined,
-        viewerSharedId,
       }),
       updateDailyBroadcastSettings({
         historyRetentionDays: sentRetentionDays,
-        lineAccountId: DEFAULT_LINE_ACCOUNT_ID,
+        lineAccountId: auth.payload.lineAccountId,
       }),
     ]);
 
@@ -83,6 +107,14 @@ export async function PATCH(request: Request) {
   } catch (error) {
     if (error instanceof Error && error.message === "INVALID_JSON") {
       return jsonError(400, "INVALID_JSON", "JSONとして解析できません。", requestId);
+    }
+
+    if (error instanceof Error && error.message === "INVALID_LINE_CREDENTIALS") {
+      return jsonError(400, "VALIDATION_ERROR", "LINEチャンネル資格情報を入力してください。", requestId);
+    }
+
+    if (error instanceof Error && error.message === "INVALID_LINE_ACCESS_TOKEN") {
+      return jsonError(400, "VALIDATION_ERROR", "Channel Access Tokenを検証できません。", requestId);
     }
 
     console.error("[common-settings-patch] failed", {
@@ -96,19 +128,23 @@ export async function PATCH(request: Request) {
 
 function toCommonSettingsView(
   account: {
+    accessTokenValidatedAt: null | string;
+    channelId: string;
     displayName: string;
     lineAccountId: string;
     retentionDays: number;
-    viewerSharedId: string;
+    webhookVerifiedAt: null | string;
   },
   sentRetentionDays: number,
 ): CommonSettingsView {
   return {
+    accessTokenValidatedAt: account.accessTokenValidatedAt,
+    channelId: account.channelId,
     displayName: account.displayName,
     lineAccountId: account.lineAccountId,
     receivedRetentionDays: account.retentionDays,
     sentRetentionDays,
-    viewerSharedId: account.viewerSharedId,
+    webhookUrlPath: `/api/line/webhook/${account.lineAccountId}`,
   };
 }
 

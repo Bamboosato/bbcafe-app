@@ -18,7 +18,7 @@ type PushSubscriptionRecord = {
   subscriptionId: string;
   updatedAt: null | string;
   userAgent: null | string;
-  viewerSharedId: string;
+  userId: string;
 };
 
 type WebPushConfig = {
@@ -30,19 +30,19 @@ type WebPushConfig = {
 type UpsertPushSubscriptionInput = {
   lineAccountId: string;
   subscription: unknown;
+  userId: string;
   userAgent?: null | string;
-  viewerSharedId: string;
 };
 
 type DeletePushSubscriptionInput = {
   endpoint: unknown;
   lineAccountId: string;
-  viewerSharedId: string;
+  userId: string;
 };
 
 type SendNewMessagePushNotificationsInput = {
+  accountDisplayName: string;
   lineAccountId: string;
-  viewerSharedId: string;
 };
 
 type PushNotificationPayload = {
@@ -55,7 +55,6 @@ type PushNotificationPayload = {
 type SendPushNotificationsInput = {
   lineAccountId: string;
   payload: PushNotificationPayload;
-  viewerSharedId: string;
 };
 
 let configuredVapidKey = "";
@@ -89,10 +88,10 @@ export function normalizePushSubscription(value: unknown): webPush.PushSubscript
   };
 }
 
-export function buildNewMessagePushPayload(viewerSharedId: string) {
+export function buildNewMessagePushPayload(accountDisplayName: string) {
   return {
-    body: `${viewerSharedId} 新しいメッセージがあります`,
-    tag: `new-message:${viewerSharedId}`,
+    body: `${accountDisplayName || "LINE"} 新しいメッセージがあります`,
+    tag: `new-message:${accountDisplayName || "line-account"}`,
     title: "BB Cafe Messages",
     url: "/",
   };
@@ -137,8 +136,8 @@ export async function upsertPushSubscription(input: UpsertPushSubscriptionInput)
       lineAccountId: input.lineAccountId,
       subscriptionId,
       updatedAt: FieldValue.serverTimestamp(),
+      userId: input.userId,
       userAgent,
-      viewerSharedId: input.viewerSharedId,
     };
 
     transaction.set(
@@ -175,7 +174,7 @@ export async function deletePushSubscription(input: DeletePushSubscriptionInput)
 
   const record = toPushSubscriptionRecord(snapshot.id, snapshot.data() ?? {});
 
-  if (record.lineAccountId !== input.lineAccountId || record.viewerSharedId !== input.viewerSharedId) {
+  if (record.lineAccountId !== input.lineAccountId || record.userId !== input.userId) {
     return false;
   }
 
@@ -187,8 +186,7 @@ export async function deletePushSubscription(input: DeletePushSubscriptionInput)
 export async function sendNewMessagePushNotifications(input: SendNewMessagePushNotificationsInput) {
   return sendPushNotificationsToViewers({
     lineAccountId: input.lineAccountId,
-    payload: buildNewMessagePushPayload(input.viewerSharedId),
-    viewerSharedId: input.viewerSharedId,
+    payload: buildNewMessagePushPayload(input.accountDisplayName),
   });
 }
 
@@ -218,10 +216,6 @@ export async function sendPushNotificationsToViewers(input: SendPushNotification
 
   for (const doc of snapshot.docs) {
     const record = toPushSubscriptionRecord(doc.id, doc.data());
-
-    if (record.viewerSharedId !== input.viewerSharedId) {
-      continue;
-    }
 
     try {
       await webPush.sendNotification(
@@ -314,8 +308,8 @@ function toPushSubscriptionRecord(subscriptionId: string, data: FirebaseFirestor
     lineAccountId: String(data.lineAccountId ?? ""),
     subscriptionId: String(data.subscriptionId ?? subscriptionId),
     updatedAt: toIsoString(data.updatedAt),
+    userId: String(data.userId ?? data.viewerSharedId ?? ""),
     userAgent: typeof data.userAgent === "string" ? data.userAgent : null,
-    viewerSharedId: String(data.viewerSharedId ?? ""),
   };
 }
 

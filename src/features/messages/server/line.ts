@@ -157,8 +157,8 @@ async function processTextMessageEvent(
 
   if (result.created) {
     await sendNewMessagePushNotifications({
+      accountDisplayName: account.displayName,
       lineAccountId,
-      viewerSharedId: account.viewerSharedId,
     }).catch((error) => {
       console.warn("[line-webhook] push notification failed", {
         lineAccountId,

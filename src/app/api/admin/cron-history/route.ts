@@ -4,7 +4,6 @@ import { createRequestId } from "@/lib/server/request";
 import { listAutoSendRuns } from "@/features/messages/server/broadcasts";
 import { listConfirmationReminderRuns } from "@/features/messages/server/confirmations";
 import { buildCronHistoryItems } from "@/features/messages/server/cronHistory";
-import { DEFAULT_LINE_ACCOUNT_ID } from "@/features/messages/server/lineAccounts";
 import { listCronRuns } from "@/features/messages/server/messages";
 
 export const runtime = "nodejs";
@@ -21,9 +20,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const limit = Number(url.searchParams.get("limit") ?? 20);
     const [deleteRunsResult, sendRunsResult, reminderRunsResult] = await Promise.allSettled([
-      listCronRuns(limit),
-      listAutoSendRuns(DEFAULT_LINE_ACCOUNT_ID, limit),
-      listConfirmationReminderRuns(DEFAULT_LINE_ACCOUNT_ID, limit),
+      listCronRuns(auth.payload.lineAccountId, limit),
+      listAutoSendRuns(auth.payload.lineAccountId, limit),
+      listConfirmationReminderRuns(auth.payload.lineAccountId, limit),
     ]);
     const deleteRuns = deleteRunsResult.status === "fulfilled" ? deleteRunsResult.value : [];
     const sendRuns = sendRunsResult.status === "fulfilled" ? sendRunsResult.value : [];

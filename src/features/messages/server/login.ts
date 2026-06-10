@@ -48,7 +48,7 @@ export async function verifyViewerCredentials({
 
   const sharedIdValid = safeStringEqual(
     normalizeLoginId(sharedId),
-    normalizeLoginId(account.viewerSharedId),
+    normalizeLoginId(account.viewerSharedId ?? ""),
   );
   const passwordValid = await verifyPasswordHash(password, account.viewerPasswordHash);
 

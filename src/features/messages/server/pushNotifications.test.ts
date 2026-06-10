@@ -7,10 +7,10 @@ import {
 } from "./pushNotifications";
 
 describe("push notification helpers", () => {
-  it("builds a shared-id scoped new message payload", () => {
-    expect(buildNewMessagePushPayload("bbcafe")).toEqual({
-      body: "bbcafe 新しいメッセージがあります",
-      tag: "new-message:bbcafe",
+  it("builds a channel-scoped new message payload", () => {
+    expect(buildNewMessagePushPayload("BBカフェ")).toEqual({
+      body: "BBカフェ 新しいメッセージがあります",
+      tag: "new-message:BBカフェ",
       title: "BB Cafe Messages",
       url: "/",
     });

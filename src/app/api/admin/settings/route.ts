@@ -1,9 +1,7 @@
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireAdminSession } from "@/lib/server/auth";
-import { createPasswordHash } from "@/lib/server/crypto";
 import { createRequestId, readJsonBody } from "@/lib/server/request";
 import {
-  DEFAULT_LINE_ACCOUNT_ID,
   getLineAccount,
   toLineAccountView,
   updateLineAccountSettings,
@@ -20,7 +18,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const account = await getLineAccount(DEFAULT_LINE_ACCOUNT_ID);
+    const account = await getLineAccount(auth.payload.lineAccountId);
 
     return jsonData({ settings: toLineAccountView(account) }, requestId);
   } catch (error) {
@@ -43,16 +41,14 @@ export async function PATCH(request: Request) {
 
   try {
     const body = await readJsonBody(request);
+    const channelId = pickString(body, "channelId");
     const displayName = pickString(body, "displayName");
-    const viewerSharedId = pickString(body, "viewerSharedId");
-    const viewerPassword = pickString(body, "viewerPassword");
     const retentionDays = pickNumber(body, "retentionDays");
     const account = await updateLineAccountSettings({
+      channelId,
       displayName,
-      lineAccountId: DEFAULT_LINE_ACCOUNT_ID,
+      lineAccountId: auth.payload.lineAccountId,
       retentionDays,
-      viewerPasswordHash: viewerPassword ? createPasswordHash(viewerPassword) : undefined,
-      viewerSharedId,
     });
 
     return jsonData({ settings: toLineAccountView(account) }, requestId);

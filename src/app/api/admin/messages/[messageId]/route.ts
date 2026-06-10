@@ -1,7 +1,6 @@
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireAdminSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
-import { DEFAULT_LINE_ACCOUNT_ID } from "@/features/messages/server/lineAccounts";
 import { deleteMessage } from "@/features/messages/server/messages";
 
 export const runtime = "nodejs";
@@ -22,7 +21,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
   try {
     const { messageId } = await context.params;
-    const deleted = await deleteMessage(DEFAULT_LINE_ACCOUNT_ID, messageId);
+    const deleted = await deleteMessage(auth.payload.lineAccountId, messageId);
 
     if (!deleted) {
       return jsonError(404, "NOT_FOUND", "メッセージが見つかりません。", requestId);

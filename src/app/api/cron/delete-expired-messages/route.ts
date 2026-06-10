@@ -1,6 +1,6 @@
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { createRequestId } from "@/lib/server/request";
-import { DEFAULT_LINE_ACCOUNT_ID } from "@/features/messages/server/lineAccounts";
+import { listActiveLineAccounts } from "@/features/messages/server/lineAccounts";
 import { runExpiredMessageDeletion } from "@/features/messages/server/messages";
 import { deleteExpiredSendRuns } from "@/features/messages/server/broadcasts";
 
@@ -23,19 +23,37 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [messagesResult, sendRunsResult] = await Promise.all([
-      runExpiredMessageDeletion(DEFAULT_LINE_ACCOUNT_ID),
-      deleteExpiredSendRuns(DEFAULT_LINE_ACCOUNT_ID),
-    ]);
+    const accounts = await listActiveLineAccounts();
+    const results = [];
 
-    return jsonData(
-      {
-        ...messagesResult,
-        sendRunsDeletedCount: sendRunsResult.deletedCount,
-        sendRunsFailedCount: sendRunsResult.failedCount,
-      },
-      requestId,
-    );
+    for (const account of accounts) {
+      try {
+        const [messagesResult, sendRunsResult] = await Promise.all([
+          runExpiredMessageDeletion(account.lineAccountId),
+          deleteExpiredSendRuns(account.lineAccountId),
+        ]);
+
+        results.push({
+          ...messagesResult,
+          lineAccountId: account.lineAccountId,
+          sendRunsDeletedCount: sendRunsResult.deletedCount,
+          sendRunsFailedCount: sendRunsResult.failedCount,
+        });
+      } catch (error) {
+        console.error("[cron-delete-expired-messages] account failed", {
+          lineAccountId: account.lineAccountId,
+          message: error instanceof Error ? error.message : String(error),
+          requestId,
+        });
+        results.push({
+          error: error instanceof Error ? error.message : String(error),
+          lineAccountId: account.lineAccountId,
+          status: "failed",
+        });
+      }
+    }
+
+    return jsonData({ results }, requestId, results.some((result) => result.status === "failed") ? 207 : 200);
   } catch (error) {
     console.error("[cron-delete-expired-messages] failed", {
       message: error instanceof Error ? error.message : String(error),

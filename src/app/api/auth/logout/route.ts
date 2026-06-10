@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { createRequestId } from "@/lib/server/request";
 import {
-  ADMIN_SESSION_COOKIE,
-  clearSessionCookieOptions,
-  VIEWER_SESSION_COOKIE,
+  clearAppSessionCookies,
 } from "@/lib/server/session";
 
 export async function POST() {
@@ -17,8 +15,7 @@ export async function POST() {
     },
   });
 
-  response.cookies.set(ADMIN_SESSION_COOKIE, "", clearSessionCookieOptions());
-  response.cookies.set(VIEWER_SESSION_COOKIE, "", clearSessionCookieOptions());
+  clearAppSessionCookies(response);
 
   return response;
 }

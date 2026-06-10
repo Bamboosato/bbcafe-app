@@ -1,4 +1,5 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 
 function requiredEnv(name: string) {
@@ -44,7 +45,7 @@ function normalizePrivateKey(value: string) {
   return normalized;
 }
 
-export function getAdminDb() {
+function ensureAdminApp() {
   if (!getApps().length) {
     const projectId = requiredEnv("FIREBASE_PROJECT_ID");
     const clientEmail = requiredEnv("FIREBASE_CLIENT_EMAIL");
@@ -58,6 +59,16 @@ export function getAdminDb() {
       }),
     });
   }
+}
+
+export function getAdminAuth() {
+  ensureAdminApp();
+
+  return getAuth();
+}
+
+export function getAdminDb() {
+  ensureAdminApp();
 
   return getFirestore();
 }

@@ -1,15 +1,19 @@
-import { jsonData } from "@/lib/server/api-response";
+import { NextResponse } from "next/server";
 import { createRequestId } from "@/lib/server/request";
-import { ADMIN_SESSION_COOKIE, readCookie, verifyAdminSessionCookie } from "@/lib/server/session";
+import { clearAppSessionCookies } from "@/lib/server/session";
 
-export async function GET(request: Request) {
+export async function GET() {
   const requestId = createRequestId();
-  const payload = verifyAdminSessionCookie(readCookie(request, ADMIN_SESSION_COOKIE));
-
-  return jsonData(
-    {
-      authenticated: Boolean(payload),
+  const response = NextResponse.json({
+    data: {
+      authenticated: false,
     },
-    requestId,
-  );
+    meta: {
+      requestId,
+    },
+  });
+
+  clearAppSessionCookies(response);
+
+  return response;
 }

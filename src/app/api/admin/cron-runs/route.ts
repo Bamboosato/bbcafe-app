@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const runs = await listCronRuns(20);
+    const runs = await listCronRuns(auth.payload.lineAccountId, 20);
 
     return jsonData({ runs }, requestId);
   } catch (error) {
