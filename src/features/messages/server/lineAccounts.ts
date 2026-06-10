@@ -8,16 +8,23 @@ export const DEFAULT_VIEWER_SHARED_ID = "bbcafe";
 export const DEFAULT_RETENTION_DAYS = 90;
 
 export type LineAccountRecord = LineAccountView & {
+  accessTokenValidatedAt: null | string;
   channelAccessTokenRef: string;
   channelSecretRef: string;
   createdAt: null | string;
+  ownerUid: null | string;
   updatedAt: null | string;
   viewerPasswordHash: string;
+  webhookVerifiedAt: null | string;
 };
 
 type UpdateSettingsInput = {
+  accessTokenValidatedAt?: Date;
+  channelId?: string;
+  credentialProvider?: "encryptedFirestore" | "env";
   displayName?: string;
   lineAccountId?: string;
+  ownerUid?: string;
   retentionDays?: number;
   viewerPasswordHash?: string;
   viewerSharedId?: string;
@@ -46,14 +53,18 @@ export async function updateLineAccountSettings(input: UpdateSettingsInput) {
     .set(
       {
         channelAccessTokenRef: current.channelAccessTokenRef,
-        channelId: current.channelId,
+        channelId: input.channelId?.trim() ?? current.channelId,
         channelSecretRef: current.channelSecretRef,
-        credentialProvider: current.credentialProvider,
+        credentialProvider: input.credentialProvider ?? current.credentialProvider,
         displayName: input.displayName?.trim() || current.displayName,
         lineAccountId,
+        ownerUid: input.ownerUid ?? current.ownerUid ?? null,
         retentionDays: nextRetentionDays,
         status: current.status,
         updatedAt: FieldValue.serverTimestamp(),
+        ...(input.accessTokenValidatedAt
+          ? { accessTokenValidatedAt: input.accessTokenValidatedAt }
+          : {}),
         viewerPasswordHash: input.viewerPasswordHash ?? current.viewerPasswordHash,
         viewerSharedId: input.viewerSharedId?.trim() || current.viewerSharedId,
         ...(current.createdAt ? {} : { createdAt: FieldValue.serverTimestamp() }),
@@ -64,49 +75,76 @@ export async function updateLineAccountSettings(input: UpdateSettingsInput) {
   return getLineAccount(lineAccountId);
 }
 
+export async function listActiveLineAccounts() {
+  const db = getAdminDb();
+  const snapshot = await db
+    .collection("lineAccounts")
+    .where("status", "==", "active")
+    .limit(100)
+    .get();
+  const accounts = snapshot.docs.map((doc) => toLineAccountRecord(doc.id, doc.data()));
+
+  if (accounts.length) {
+    return accounts;
+  }
+
+  return [await getLineAccount(DEFAULT_LINE_ACCOUNT_ID)];
+}
+
 export function toLineAccountView(record: LineAccountRecord): LineAccountView {
   return {
+    accessTokenValidatedAt: record.accessTokenValidatedAt,
     channelId: record.channelId,
     credentialProvider: record.credentialProvider,
     displayName: record.displayName,
     lineAccountId: record.lineAccountId,
     retentionDays: record.retentionDays,
     status: record.status,
-    viewerSharedId: record.viewerSharedId,
+    webhookVerifiedAt: record.webhookVerifiedAt,
   };
 }
 
 function defaultLineAccount(lineAccountId: string): LineAccountRecord {
+  const useEnvDefaults = lineAccountId === DEFAULT_LINE_ACCOUNT_ID;
+
   return {
-    channelAccessTokenRef: "LINE_CHANNEL_ACCESS_TOKEN",
-    channelId: process.env.LINE_CHANNEL_ID?.trim() || "",
-    channelSecretRef: "LINE_CHANNEL_SECRET",
+    accessTokenValidatedAt: null,
+    channelAccessTokenRef: useEnvDefaults ? "LINE_CHANNEL_ACCESS_TOKEN" : "",
+    channelId: useEnvDefaults ? process.env.LINE_CHANNEL_ID?.trim() || "" : "",
+    channelSecretRef: useEnvDefaults ? "LINE_CHANNEL_SECRET" : "",
     createdAt: null,
-    credentialProvider: "env",
-    displayName: process.env.LINE_ACCOUNT_DISPLAY_NAME?.trim() || "BB Cafe LINE",
+    credentialProvider: useEnvDefaults ? "env" : "encryptedFirestore",
+    displayName: useEnvDefaults ? process.env.LINE_ACCOUNT_DISPLAY_NAME?.trim() || "BB Cafe LINE" : "",
     lineAccountId,
+    ownerUid: null,
     retentionDays: normalizeRetentionDays(Number(process.env.RETENTION_DAYS ?? DEFAULT_RETENTION_DAYS)),
     status: "active",
     updatedAt: null,
-    viewerPasswordHash: process.env.VIEWER_PASSWORD_HASH?.trim() || "",
-    viewerSharedId: process.env.VIEWER_SHARED_ID?.trim() || DEFAULT_VIEWER_SHARED_ID,
+    viewerPasswordHash: useEnvDefaults ? process.env.VIEWER_PASSWORD_HASH?.trim() || "" : "",
+    viewerSharedId: useEnvDefaults ? process.env.VIEWER_SHARED_ID?.trim() || DEFAULT_VIEWER_SHARED_ID : "",
+    webhookVerifiedAt: null,
   };
 }
 
 function toLineAccountRecord(lineAccountId: string, data: FirebaseFirestore.DocumentData): LineAccountRecord {
+  const useEnvDefaults = lineAccountId === DEFAULT_LINE_ACCOUNT_ID;
+
   return {
-    channelAccessTokenRef: String(data.channelAccessTokenRef ?? "LINE_CHANNEL_ACCESS_TOKEN"),
-    channelId: String(data.channelId ?? process.env.LINE_CHANNEL_ID ?? ""),
-    channelSecretRef: String(data.channelSecretRef ?? "LINE_CHANNEL_SECRET"),
+    accessTokenValidatedAt: toIsoString(data.accessTokenValidatedAt),
+    channelAccessTokenRef: String(data.channelAccessTokenRef ?? (useEnvDefaults ? "LINE_CHANNEL_ACCESS_TOKEN" : "")),
+    channelId: String(data.channelId ?? (useEnvDefaults ? process.env.LINE_CHANNEL_ID ?? "" : "")),
+    channelSecretRef: String(data.channelSecretRef ?? (useEnvDefaults ? "LINE_CHANNEL_SECRET" : "")),
     createdAt: toIsoString(data.createdAt),
-    credentialProvider: data.credentialProvider === "encryptedFirestore" ? "encryptedFirestore" : "env",
-    displayName: String(data.displayName ?? process.env.LINE_ACCOUNT_DISPLAY_NAME ?? "BB Cafe LINE"),
+    credentialProvider: data.credentialProvider === "encryptedFirestore" ? "encryptedFirestore" : useEnvDefaults ? "env" : "encryptedFirestore",
+    displayName: String(data.displayName ?? (useEnvDefaults ? process.env.LINE_ACCOUNT_DISPLAY_NAME ?? "BB Cafe LINE" : "")),
     lineAccountId,
+    ownerUid: typeof data.ownerUid === "string" ? data.ownerUid : null,
     retentionDays: normalizeRetentionDays(Number(data.retentionDays ?? DEFAULT_RETENTION_DAYS)),
     status: data.status === "disabled" ? "disabled" : "active",
     updatedAt: toIsoString(data.updatedAt),
-    viewerPasswordHash: String(data.viewerPasswordHash ?? process.env.VIEWER_PASSWORD_HASH ?? ""),
-    viewerSharedId: String(data.viewerSharedId ?? process.env.VIEWER_SHARED_ID ?? DEFAULT_VIEWER_SHARED_ID),
+    viewerPasswordHash: String(data.viewerPasswordHash ?? (useEnvDefaults ? process.env.VIEWER_PASSWORD_HASH ?? "" : "")),
+    viewerSharedId: String(data.viewerSharedId ?? (useEnvDefaults ? process.env.VIEWER_SHARED_ID ?? DEFAULT_VIEWER_SHARED_ID : "")),
+    webhookVerifiedAt: toIsoString(data.webhookVerifiedAt),
   };
 }
 

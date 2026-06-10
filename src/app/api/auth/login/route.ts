@@ -1,128 +1,59 @@
 import { NextResponse } from "next/server";
 import { jsonError } from "@/lib/server/api-response";
+import { getAdminAuth } from "@/lib/server/firebase";
 import { createRequestId, readJsonBody } from "@/lib/server/request";
 import {
-  ADMIN_SESSION_COOKIE,
-  clearSessionCookieOptions,
-  createAdminSessionCookieValue,
-  createViewerSessionCookieValue,
+  ACCOUNT_SESSION_COOKIE,
+  clearAppSessionCookies,
+  createAccountSessionCookieValue,
   sessionCookieOptions,
-  VIEWER_SESSION_COOKIE,
 } from "@/lib/server/session";
-import { writeAuditLogBestEffort } from "@/features/messages/server/auditLog";
-import { DEFAULT_LINE_ACCOUNT_ID, getLineAccount } from "@/features/messages/server/lineAccounts";
-import {
-  isConfiguredAdminLoginId,
-  verifyConfiguredAdminPassword,
-  verifyViewerCredentials,
-} from "@/features/messages/server/login";
+import { getOrProvisionAuthUser } from "@/features/messages/server/authUsers";
+import { getLineAccount } from "@/features/messages/server/lineAccounts";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const requestId = createRequestId();
-  const lineAccountId = DEFAULT_LINE_ACCOUNT_ID;
 
   try {
     const body = await readJsonBody(request);
-    const id = pickString(body, "id");
-    const password = pickString(body, "password");
+    const idToken = pickString(body, "idToken");
 
-    if (isConfiguredAdminLoginId(id)) {
-      const adminPassword = await verifyConfiguredAdminPassword(password);
-
-      if (!adminPassword.configured) {
-        return jsonError(503, "SERVICE_UNAVAILABLE", "管理者認証の設定が不足しています。", requestId);
-      }
-
-      if (!adminPassword.valid) {
-        await writeAuditLogBestEffort({
-          actor: "admin",
-          message: "Admin login failed",
-          requestId,
-          result: "failure",
-          type: "admin_login_failure",
-        });
-
-        return jsonError(401, "UNAUTHORIZED", "IDまたはパスワードが正しくありません。", requestId);
-      }
-
-      const account = await getLineAccount(lineAccountId);
-
-      await writeAuditLogBestEffort({
-        actor: "admin",
-        message: "Admin login succeeded",
-        requestId,
-        result: "success",
-        type: "admin_login_success",
-      });
-
-      const response = NextResponse.json({
-        data: {
-          authenticated: true,
-          role: "admin",
-          viewerSharedId: account.viewerSharedId,
-        },
-        meta: {
-          requestId,
-        },
-      });
-
-      response.cookies.set(ADMIN_SESSION_COOKIE, createAdminSessionCookieValue(), sessionCookieOptions());
-      response.cookies.set(
-        VIEWER_SESSION_COOKIE,
-        createViewerSessionCookieValue(lineAccountId, Date.now(), account.viewerSharedId),
-        sessionCookieOptions(),
-      );
-
-      return response;
+    if (!idToken) {
+      return jsonError(400, "VALIDATION_ERROR", "認証トークンが不足しています。", requestId);
     }
 
-    const viewerAuth = await verifyViewerCredentials({ lineAccountId, password, sharedId: id });
+    const decodedToken = await getAdminAuth().verifyIdToken(idToken);
+    const authUser = await getOrProvisionAuthUser(decodedToken);
 
-    if (!viewerAuth.configured) {
-      return jsonError(503, "SERVICE_UNAVAILABLE", "閲覧者認証の設定が不足しています。", requestId);
+    if (authUser.status !== "active" || !authUser.lineAccountId) {
+      return jsonError(403, "FORBIDDEN", "このアカウントは利用できません。", requestId);
     }
 
-    if (!viewerAuth.valid) {
-      await writeAuditLogBestEffort({
-        actor: "viewer",
-        lineAccountId,
-        message: "Viewer login failed",
-        requestId,
-        result: "failure",
-        type: "viewer_login_failure",
-      });
-
-      return jsonError(401, "UNAUTHORIZED", "IDまたはパスワードが正しくありません。", requestId);
-    }
-
-    await writeAuditLogBestEffort({
-      actor: "viewer",
-      lineAccountId,
-      message: "Viewer login succeeded",
-      requestId,
-      result: "success",
-      type: "viewer_login_success",
-    });
-
+    const account = await getLineAccount(authUser.lineAccountId);
     const response = NextResponse.json({
       data: {
         authenticated: true,
-        role: "viewer",
-        viewerSharedId: viewerAuth.account.viewerSharedId,
+        displayName: account.displayName,
+        email: authUser.email,
+        lineAccountId: authUser.lineAccountId,
       },
       meta: {
         requestId,
       },
     });
 
+    clearAppSessionCookies(response);
     response.cookies.set(
-      VIEWER_SESSION_COOKIE,
-      createViewerSessionCookieValue(lineAccountId, Date.now(), viewerAuth.account.viewerSharedId),
+      ACCOUNT_SESSION_COOKIE,
+      createAccountSessionCookieValue({
+        email: authUser.email,
+        lineAccountId: authUser.lineAccountId,
+        uid: authUser.uid,
+      }),
       sessionCookieOptions(),
     );
-    response.cookies.set(ADMIN_SESSION_COOKIE, "", clearSessionCookieOptions());
 
     return response;
   } catch (error) {
@@ -135,7 +66,7 @@ export async function POST(request: Request) {
       requestId,
     });
 
-    return jsonError(503, "SERVICE_UNAVAILABLE", "認証を利用できません。", requestId);
+    return jsonError(401, "UNAUTHORIZED", "メールアドレスまたはパスワードが正しくありません。", requestId);
   }
 }
 

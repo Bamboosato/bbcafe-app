@@ -1,21 +1,25 @@
 export type SourceType = "group" | "user";
 
 export type LineAccountView = {
+  accessTokenValidatedAt?: null | string;
   channelId: string;
   credentialProvider: "encryptedFirestore" | "env";
   displayName: string;
   lineAccountId: string;
   retentionDays: number;
   status: "active" | "disabled";
-  viewerSharedId: string;
+  viewerSharedId?: string;
+  webhookVerifiedAt?: null | string;
 };
 
 export type CommonSettingsView = {
+  accessTokenValidatedAt: null | string;
+  channelId: string;
   displayName: string;
   lineAccountId: string;
   receivedRetentionDays: number;
   sentRetentionDays: number;
-  viewerSharedId: string;
+  webhookUrlPath: string;
 };
 
 export type UserInfoView = {
@@ -96,6 +100,7 @@ export type CronRunView = {
   deletedCount: number;
   failedCount: number;
   finishedAt: null | string;
+  lineAccountId: string;
   protectedCount: number;
   runId: string;
   skippedReason: null | string;

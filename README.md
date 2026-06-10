@@ -1,13 +1,13 @@
 # bbcafe-app
 
-LINE公式アカウントに届いたテキストメッセージを、共有ID/パスワードで閲覧するWebアプリです。
+LINE公式アカウントに届いたテキストメッセージを、Firebase Authのメールアドレス/パスワードで閲覧するWebアプリです。
 
 ## 実装範囲
 
 - LINE Messaging API Webhook受信
 - 1対1トーク、グループトークのテキスト保存
-- 閲覧者ログイン: 共有ID + パスワード
-- 管理者ログイン: 管理者ID + パスワード
+- Firebase Authログイン: メールアドレス + パスワード
+- パスワードリセットメール送信
 - メッセージ一覧/詳細
 - PWAの新着Push通知
 - 管理者によるメッセージ削除
@@ -21,23 +21,24 @@ npm install
 cp .env.example .env.local
 ```
 
-パスワードhashを生成します。
+Firebase ConsoleのAuthenticationでログインユーザーを作成します。アプリ側に新規登録画面はありません。
 
-```bash
-npm run hash-password -- <admin-password>
-npm run hash-password -- <viewer-password>
-```
+初期移行では、`INITIAL_OWNER_UID` または `INITIAL_OWNER_EMAIL` に一致するFirebase Authユーザーの初回ログイン時に `LINE_DEFAULT_ACCOUNT_ID` のデータが自動で紐づきます。
 
 `.env.local` に設定します。
 
 ```env
-ADMIN_LOGIN_ID=admin
-ADMIN_PASSWORD_HASH=<generated admin hash>
+NEXT_PUBLIC_FIREBASE_API_KEY=<firebase web api key>
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=<firebase auth domain>
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=<firebase project id>
+SESSION_SECRET=<random secret>
 APP_BASE_URL=https://<your-domain>
-
-VIEWER_SHARED_ID=bbcafe
-VIEWER_PASSWORD_HASH=<generated viewer hash>
+INITIAL_OWNER_UID=JsYf0oEHvcNG3Ch2ttxTO824i4Q2
+INITIAL_OWNER_EMAIL=takes.ngo.jp@gmail.com
+INITIAL_LINE_ACCOUNT_ID=default
 RETENTION_DAYS=90
+APP_ENCRYPTION_KEY=<base64-encoded 32-byte key>
+APP_ENCRYPTION_KEY_VERSION=v1
 ```
 
 その他、Firebase Admin SDK、LINE Messaging API、Cron用の値も `.env.local` またはVercel Environment Variablesへ設定します。

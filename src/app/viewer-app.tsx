@@ -4,11 +4,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
+import {
   filterMessages,
   matchesMessageFilter,
   MESSAGE_FILTER_OPTIONS,
   type MessageFilter,
 } from "@/features/messages/messageFilter";
+import { getClientAuth } from "@/lib/firebaseClient";
 import type {
   AutomationSettingsView,
   CommonSettingsView,
@@ -17,8 +24,6 @@ import type {
   SendRunView,
   UserInfoView,
 } from "@/features/messages/types";
-
-type ViewerRole = "admin" | "viewer";
 
 type ViewerView = "cron-runs" | "generated-message" | "messages" | "sent" | "settings" | "users";
 
@@ -31,8 +36,9 @@ type ApiEnvelope<T> = {
 
 type SessionResponse = {
   authenticated: boolean;
-  role: null | ViewerRole;
-  viewerSharedId: null | string;
+  displayName: null | string;
+  email: null | string;
+  lineAccountId: null | string;
 };
 
 type MessagesResponse = {
@@ -102,14 +108,16 @@ export default function ViewerApp({
   const router = useRouter();
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
-  const [role, setRole] = useState<ViewerRole | null>(null);
-  const [sharedId, setSharedId] = useState("bbcafe");
+  const [accountEmail, setAccountEmail] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [resetMode, setResetMode] = useState(false);
   const [messages, setMessages] = useState<MessageView[]>([]);
   const [sentRuns, setSentRuns] = useState<SendRunView[]>([]);
   const [users, setUsers] = useState<UserInfoView[]>([]);
   const [commonSettings, setCommonSettings] = useState<CommonSettingsView | null>(null);
-  const [commonSettingsPassword, setCommonSettingsPassword] = useState("");
+  const [commonSettingsChannelAccessToken, setCommonSettingsChannelAccessToken] = useState("");
+  const [commonSettingsChannelSecret, setCommonSettingsChannelSecret] = useState("");
   const [cronHistoryItems, setCronHistoryItems] = useState<CronHistoryItemView[]>([]);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
@@ -134,6 +142,8 @@ export default function ViewerApp({
   const [loadingCommonSettings, setLoadingCommonSettings] = useState(false);
   const [loadingCronHistory, setLoadingCronHistory] = useState(false);
   const [savingCommonSettings, setSavingCommonSettings] = useState(false);
+  const [submittingLogin, setSubmittingLogin] = useState(false);
+  const [submittingReset, setSubmittingReset] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -145,7 +155,6 @@ export default function ViewerApp({
   const loadingCommonSettingsRef = useRef(false);
   const loadingCronHistoryRef = useRef(false);
 
-  const isAdmin = role === "admin";
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
   const selectedUsers = useMemo(
@@ -154,7 +163,7 @@ export default function ViewerApp({
   );
   const selectedUserIds = useMemo(() => selectedUsers.map((user) => user.userId), [selectedUsers]);
   const currentView = initialView;
-  const viewItems = useMemo(() => getViewItems(isAdmin), [isAdmin]);
+  const viewItems = VIEW_ITEMS;
   const messageListStatus = loadingMessages ? "更新中です。" : status || "更新ボタンで最新の受信履歴を取得します。";
 
   const checkForAppUpdate = useCallback(async () => {
@@ -294,10 +303,6 @@ export default function ViewerApp({
       const nextSettings = result.data?.settings ?? null;
       setCommonSettings(nextSettings);
 
-      if (nextSettings?.viewerSharedId) {
-        setSharedId(nextSettings.viewerSharedId);
-      }
-
       setStatus(`共通設定の最終更新: ${formatTime(new Date().toISOString())}`);
     } finally {
       loadingCommonSettingsRef.current = false;
@@ -333,11 +338,6 @@ export default function ViewerApp({
   }, []);
 
   function navigateToView(view: ViewerView) {
-    if (isAdminOnlyView(view) && !isAdmin) {
-      router.push("/");
-      return;
-    }
-
     setAccountMenuOpen(false);
     setNavMenuOpen(false);
     setSelectedMessage(null);
@@ -363,30 +363,76 @@ export default function ViewerApp({
     }
   }, [currentView, loadMessages]);
 
+  const establishSession = useCallback(async (idToken: string) => {
+    const result = await fetchJson<SessionResponse>("/api/auth/login", {
+      body: JSON.stringify({ idToken }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+
+    if (result.error || !result.data?.authenticated) {
+      throw new Error(result.error?.message ?? "ログインできません。");
+    }
+
+    setAccountEmail(result.data.email ?? "");
+    setAuthenticated(true);
+  }, []);
+
   useEffect(() => {
     let active = true;
+    let unsubscribe: () => void = () => undefined;
 
-    fetchJson<SessionResponse>("/api/auth/session").then((result) => {
-      if (!active) {
-        return;
-      }
+    try {
+      const auth = getClientAuth();
 
-      const nextAuthenticated = Boolean(result.data?.authenticated);
-      const nextRole = result.data?.role ?? null;
-      setAuthenticated(nextAuthenticated);
-      setRole(nextRole);
-      setCheckingSession(false);
+      unsubscribe = onAuthStateChanged(auth, (user) => {
+        void (async () => {
+          if (!active) {
+            return;
+          }
 
-      if (result.data?.viewerSharedId) {
-        setSharedId(result.data.viewerSharedId);
-      }
+          if (!user) {
+            await fetchJson("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+            setAuthenticated(false);
+            setAccountEmail("");
+            setCheckingSession(false);
+            return;
+          }
 
-    });
+          try {
+            await establishSession(await user.getIdToken());
+          } catch (error) {
+            setAuthenticated(false);
+            setAccountEmail("");
+            setError(error instanceof Error ? error.message : "ログインできません。");
+          } finally {
+            if (active) {
+              setCheckingSession(false);
+            }
+          }
+        })();
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Firebase Authの設定が不足しています。";
+
+      window.setTimeout(() => {
+        if (!active) {
+          return;
+        }
+
+        setAuthenticated(false);
+        setError(message);
+        setCheckingSession(false);
+      }, 0);
+    }
 
     return () => {
       active = false;
+      unsubscribe();
     };
-  }, []);
+  }, [establishSession]);
 
   useEffect(() => {
     if (!authenticated) {
@@ -394,11 +440,6 @@ export default function ViewerApp({
     }
 
     const timer = window.setTimeout(() => {
-      if (isAdminOnlyView(currentView) && !isAdmin) {
-        router.replace("/");
-        return;
-      }
-
       if (currentView === "messages") {
         void loadMessages();
       }
@@ -431,14 +472,12 @@ export default function ViewerApp({
   }, [
     authenticated,
     currentView,
-    isAdmin,
     loadAutomationSettings,
     loadCommonSettings,
     loadCronHistory,
     loadMessages,
     loadSentRuns,
     loadUsers,
-    router,
     users.length,
   ]);
 
@@ -717,27 +756,18 @@ export default function ViewerApp({
     event.preventDefault();
     setError("");
     setStatus("");
+    setSubmittingLogin(true);
 
-    const result = await fetchJson<SessionResponse>("/api/auth/login", {
-      body: JSON.stringify({ id: sharedId, password }),
-      headers: {
-        "Content-Type": "application/json",
-      },
-      method: "POST",
-    });
-
-    if (result.error || !result.data?.authenticated) {
-      setError(result.error?.message ?? "ログインできません。");
-      return;
+    try {
+      const auth = getClientAuth();
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      await establishSession(await credential.user.getIdToken());
+      setPassword("");
+    } catch (error) {
+      setError(error instanceof Error ? "メールアドレスまたはパスワードが正しくありません。" : "ログインできません。");
+    } finally {
+      setSubmittingLogin(false);
     }
-
-    if (result.data.viewerSharedId) {
-      setSharedId(result.data.viewerSharedId);
-    }
-
-    setPassword("");
-    setRole(result.data.role);
-    setAuthenticated(true);
   }
 
   async function handleLogout() {
@@ -746,8 +776,9 @@ export default function ViewerApp({
     }
 
     await fetchJson("/api/auth/logout", { method: "POST" });
+    await signOut(getClientAuth()).catch(() => undefined);
     setAuthenticated(false);
-    setRole(null);
+    setAccountEmail("");
     setAccountMenuOpen(false);
     setNavMenuOpen(false);
     setMessageFilter("all");
@@ -755,7 +786,8 @@ export default function ViewerApp({
     setSentRuns([]);
     setUsers([]);
     setCommonSettings(null);
-    setCommonSettingsPassword("");
+    setCommonSettingsChannelAccessToken("");
+    setCommonSettingsChannelSecret("");
     setCronHistoryItems([]);
     setSelectedSendRun(null);
     setAutomationSettings(null);
@@ -909,11 +941,12 @@ export default function ViewerApp({
     try {
       const result = await fetchJson<CommonSettingsResponse>("/api/admin/common-settings", {
         body: JSON.stringify({
+          channelAccessToken: commonSettingsChannelAccessToken.trim() || undefined,
+          channelId: commonSettings.channelId,
+          channelSecret: commonSettingsChannelSecret.trim() || undefined,
           displayName: commonSettings.displayName,
           receivedRetentionDays: commonSettings.receivedRetentionDays,
           sentRetentionDays: commonSettings.sentRetentionDays,
-          viewerPassword: commonSettingsPassword.trim() ? commonSettingsPassword : undefined,
-          viewerSharedId: commonSettings.viewerSharedId,
         }),
         headers: {
           "Content-Type": "application/json",
@@ -927,8 +960,8 @@ export default function ViewerApp({
       }
 
       setCommonSettings(result.data.settings);
-      setCommonSettingsPassword("");
-      setSharedId(result.data.settings.viewerSharedId);
+      setCommonSettingsChannelAccessToken("");
+      setCommonSettingsChannelSecret("");
       setAutomationSettings((current) =>
         current ? { ...current, historyRetentionDays: result.data?.settings.sentRetentionDays ?? current.historyRetentionDays } : current,
       );
@@ -968,6 +1001,22 @@ export default function ViewerApp({
     setSelectedMessage(null);
   }
 
+  async function handlePasswordReset(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setStatus("");
+    setSubmittingReset(true);
+
+    try {
+      await sendPasswordResetEmail(getClientAuth(), email.trim());
+    } catch {
+      // Do not reveal whether the email exists.
+    } finally {
+      setSubmittingReset(false);
+      setStatus("登録済みのメールアドレスであれば、パスワード再設定メールを送信しました。");
+    }
+  }
+
   if (checkingSession) {
     return (
       <main className="app-shell">
@@ -982,28 +1031,46 @@ export default function ViewerApp({
         <section className="panel login-panel">
           <div className="app-title">
             <h1>BB Cafe Messages</h1>
-            <p>IDとパスワードでログインします。</p>
+            <p>メールアドレスとパスワードでログインします。</p>
           </div>
-          <form className="form-stack" onSubmit={handleLogin}>
+          <form className="form-stack" onSubmit={resetMode ? handlePasswordReset : handleLogin}>
             <label>
-              ID
+              メールアドレス
               <input
-                autoComplete="username"
-                onChange={(event) => setSharedId(event.target.value)}
-                value={sharedId}
+                autoComplete="email"
+                inputMode="email"
+                onChange={(event) => setEmail(event.target.value)}
+                type="email"
+                value={email}
               />
             </label>
-            <label>
-              パスワード
-              <input
-                autoComplete="current-password"
-                onChange={(event) => setPassword(event.target.value)}
-                type="password"
-                value={password}
-              />
-            </label>
+            {resetMode ? null : (
+              <label>
+                パスワード
+                <input
+                  autoComplete="current-password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  type="password"
+                  value={password}
+                />
+              </label>
+            )}
             {error ? <p className="error-text">{error}</p> : null}
-            <button type="submit">ログイン</button>
+            {status ? <p className="status-text">{status}</p> : null}
+            <button disabled={resetMode ? submittingReset : submittingLogin} type="submit">
+              {resetMode ? (submittingReset ? "送信中..." : "再設定メールを送信") : submittingLogin ? "ログイン中..." : "ログイン"}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => {
+                setError("");
+                setStatus("");
+                setResetMode((current) => !current);
+              }}
+              type="button"
+            >
+              {resetMode ? "ログインへ戻る" : "パスワードをお忘れですか？"}
+            </button>
           </form>
         </section>
       </main>
@@ -1032,12 +1099,8 @@ export default function ViewerApp({
             {accountMenuOpen ? (
               <div className="account-popover" role="menu">
                 <div className="account-summary">
-                  <span>共有ID</span>
-                  <strong>{sharedId}</strong>
-                </div>
-                <div className="account-summary">
-                  <span>ログイン種別</span>
-                  <strong>{isAdmin ? "管理者" : "閲覧者"}</strong>
+                  <span>メールアドレス</span>
+                  <strong>{accountEmail}</strong>
                 </div>
                 <div className="notification-setting" role="none">
                   <label className="notification-toggle">
@@ -1156,19 +1219,21 @@ export default function ViewerApp({
           statusText={generatedMessageStatus}
         />
       ) : null}
-      {currentView === "settings" && isAdmin ? (
+      {currentView === "settings" ? (
         <CommonSettingsScreen
+          channelAccessToken={commonSettingsChannelAccessToken}
+          channelSecret={commonSettingsChannelSecret}
           loading={loadingCommonSettings}
           onChange={handleCommonSettingsChange}
-          onPasswordChange={setCommonSettingsPassword}
+          onChannelAccessTokenChange={setCommonSettingsChannelAccessToken}
+          onChannelSecretChange={setCommonSettingsChannelSecret}
           onSubmit={(event) => void handleCommonSettingsSubmit(event)}
-          password={commonSettingsPassword}
           saving={savingCommonSettings}
           settings={commonSettings}
-          statusText={status || "共通設定を表示します。"}
+          statusText={status || "管理画面を表示します。"}
         />
       ) : null}
-      {currentView === "cron-runs" && isAdmin ? (
+      {currentView === "cron-runs" ? (
         <CronHistoryScreen
           items={cronHistoryItems}
           loading={loadingCronHistory}
@@ -1182,22 +1247,14 @@ export default function ViewerApp({
   );
 }
 
-const VIEW_ITEMS: Array<{ adminOnly?: boolean; label: string; view: ViewerView }> = [
+const VIEW_ITEMS: Array<{ label: string; view: ViewerView }> = [
   { label: "受信履歴", view: "messages" },
   { label: "送信履歴", view: "sent" },
   { label: "ユーザ情報", view: "users" },
   { label: "メッセージ送信", view: "generated-message" },
-  { adminOnly: true, label: "共通設定", view: "settings" },
-  { adminOnly: true, label: "Cron履歴", view: "cron-runs" },
+  { label: "管理画面", view: "settings" },
+  { label: "Cron履歴", view: "cron-runs" },
 ];
-
-function getViewItems(isAdmin: boolean) {
-  return VIEW_ITEMS.filter((item) => !item.adminOnly || isAdmin);
-}
-
-function isAdminOnlyView(view: ViewerView) {
-  return VIEW_ITEMS.some((item) => item.view === view && item.adminOnly);
-}
 
 function AppTabs({
   currentView,
@@ -1274,20 +1331,24 @@ function routeForView(view: ViewerView) {
 }
 
 function CommonSettingsScreen({
+  channelAccessToken,
+  channelSecret,
   loading,
   onChange,
-  onPasswordChange,
+  onChannelAccessTokenChange,
+  onChannelSecretChange,
   onSubmit,
-  password,
   saving,
   settings,
   statusText,
 }: {
+  channelAccessToken: string;
+  channelSecret: string;
   loading: boolean;
   onChange: <K extends keyof CommonSettingsView>(key: K, value: CommonSettingsView[K]) => void;
-  onPasswordChange: (password: string) => void;
+  onChannelAccessTokenChange: (value: string) => void;
+  onChannelSecretChange: (value: string) => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
-  password: string;
   saving: boolean;
   settings: CommonSettingsView | null;
   statusText: string;
@@ -1296,8 +1357,8 @@ function CommonSettingsScreen({
     <section className="settings-screen">
       <div className="settings-header">
         <div>
-          <h2>共通設定</h2>
-          <p className="status-text">{loading ? "共通設定を更新中です。" : statusText}</p>
+          <h2>管理画面</h2>
+          <p className="status-text">{loading ? "管理画面を更新中です。" : statusText}</p>
         </div>
       </div>
 
@@ -1305,11 +1366,22 @@ function CommonSettingsScreen({
         <section className="panel">
           <form className="settings-grid" onSubmit={onSubmit}>
             <label className="full">
-              LINE表示名
+              チャンネル名
               <input
                 onChange={(event) => onChange("displayName", event.target.value)}
                 value={settings.displayName}
               />
+            </label>
+            <label>
+              チャンネルID
+              <input
+                onChange={(event) => onChange("channelId", event.target.value)}
+                value={settings.channelId}
+              />
+            </label>
+            <label>
+              Webhook
+              <input readOnly value={settings.webhookUrlPath} />
             </label>
             <label>
               保存期間（受信）
@@ -1330,23 +1402,29 @@ function CommonSettingsScreen({
               />
             </label>
             <label>
-              共有ID
+              Channel Secret
               <input
-                autoComplete="username"
-                onChange={(event) => onChange("viewerSharedId", event.target.value)}
-                value={settings.viewerSharedId}
+                autoComplete="off"
+                onChange={(event) => onChannelSecretChange(event.target.value)}
+                placeholder="変更する場合のみ入力"
+                type="password"
+                value={channelSecret}
               />
             </label>
             <label>
-              共有パスワード変更
+              Channel Access Token
               <input
-                autoComplete="new-password"
-                onChange={(event) => onPasswordChange(event.target.value)}
+                autoComplete="off"
+                onChange={(event) => onChannelAccessTokenChange(event.target.value)}
                 placeholder="変更する場合のみ入力"
                 type="password"
-                value={password}
+                value={channelAccessToken}
               />
             </label>
+            <div className="full settings-note">
+              <span>Access Token検証</span>
+              <strong>{settings.accessTokenValidatedAt ? formatTime(settings.accessTokenValidatedAt) : "未検証"}</strong>
+            </div>
             <div className="full">
               <button disabled={saving} type="submit">
                 {saving ? "保存中..." : "設定を保存"}
@@ -1356,7 +1434,7 @@ function CommonSettingsScreen({
         </section>
       ) : (
         <div className="panel empty-message-panel">
-          {loading ? "共通設定を読み込んでいます。" : "共通設定を表示できません。"}
+          {loading ? "管理画面を読み込んでいます。" : "管理画面を表示できません。"}
         </div>
       )}
     </section>
@@ -1813,27 +1891,27 @@ function SendRunDetailModal({ run, onClose }: { run: SendRunView | null; onClose
         </dl>
         <div className="send-run-detail-section">
           <h3>本文</h3>
-          <p className="message-modal-text">{run.messageText || "本文は保存されていません。"}</p>
+          <p className="message-modal-text send-run-message-card">{run.messageText || "本文は保存されていません。"}</p>
         </div>
         <div className="send-run-detail-section">
-          <h3>確認状況</h3>
+          <h3>送信成功ユーザ（確認状況）</h3>
           {confirmationTargets.length ? (
             <div className="target-status-list">
               {confirmationTargets.map((target) => (
                 <div className="target-status-row" key={target.userId}>
                   <strong>{target.userName}</strong>
-                  <span>{formatConfirmationStatus(target.confirmationStatus)}</span>
+                  <span>確認状況 {formatConfirmationStatus(target.confirmationStatus)}</span>
                   {target.confirmedAt ? <span>確認日時 {formatTime(target.confirmedAt)}</span> : null}
                   {target.reminderSentAt ? <span>通知日時 {formatTime(target.reminderSentAt)}</span> : null}
                 </div>
               ))}
             </div>
           ) : (
-            <p className="status-text">確認対象はありません。</p>
+            <p className="status-text">送信成功ユーザはありません。</p>
           )}
         </div>
         <div className="send-run-detail-section">
-          <h3>失敗ユーザ</h3>
+          <h3>送信失敗ユーザ</h3>
           {failedTargets.length ? (
             <div className="failed-target-list">
               {failedTargets.map((target) => (
@@ -1846,7 +1924,7 @@ function SendRunDetailModal({ run, onClose }: { run: SendRunView | null; onClose
               ))}
             </div>
           ) : (
-            <p className="status-text">失敗ユーザはありません。</p>
+            <p className="status-text">送信失敗ユーザはありません。</p>
           )}
         </div>
       </div>

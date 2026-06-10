@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createRequestId } from "@/lib/server/request";
-import { ADMIN_SESSION_COOKIE, clearSessionCookieOptions } from "@/lib/server/session";
+import { clearAppSessionCookies } from "@/lib/server/session";
 
 export async function POST() {
   const requestId = createRequestId();
@@ -13,7 +13,7 @@ export async function POST() {
     },
   });
 
-  response.cookies.set(ADMIN_SESSION_COOKIE, "", clearSessionCookieOptions());
+  clearAppSessionCookies(response);
 
   return response;
 }

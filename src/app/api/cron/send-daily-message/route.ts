@@ -1,6 +1,6 @@
 import { getDailyGreetingGenerationPartialResult, generateDailyGreetingMessage } from "@/features/messages/server/gemini";
 import { getLineCredentials } from "@/features/messages/server/credentials";
-import { DEFAULT_LINE_ACCOUNT_ID, getLineAccount } from "@/features/messages/server/lineAccounts";
+import { getLineAccount, listActiveLineAccounts } from "@/features/messages/server/lineAccounts";
 import { sendLineTextMessages } from "@/features/messages/server/outboundLine";
 import {
   buildAutoBroadcastPushBody,
@@ -36,7 +36,26 @@ export async function GET(request: Request) {
     return jsonError(401, "UNAUTHORIZED", "Cron認証に失敗しました。", requestId);
   }
 
-  const lineAccountId = DEFAULT_LINE_ACCOUNT_ID;
+  try {
+    const accounts = await listActiveLineAccounts();
+    const results = [];
+
+    for (const account of accounts) {
+      results.push(await runDailyMessageForLineAccount(account.lineAccountId, requestId));
+    }
+
+    return jsonData({ results }, requestId, results.some((result) => result.status === "failed") ? 207 : 200);
+  } catch (error) {
+    console.error("[cron-send-daily-message] failed", {
+      message: error instanceof Error ? error.message : String(error),
+      requestId,
+    });
+
+    return jsonError(503, "SERVICE_UNAVAILABLE", "自動送信を実行できません。", requestId);
+  }
+}
+
+async function runDailyMessageForLineAccount(lineAccountId: string, requestId: string) {
   const startedAt = new Date();
   const runId = createAutoSendRunId(lineAccountId, startedAt);
 
@@ -44,7 +63,7 @@ export async function GET(request: Request) {
     const settings = await getDailyBroadcastSettings(lineAccountId);
 
     if (!settings.enabled) {
-      return jsonData({ runId, skipped: "disabled" }, requestId);
+      return { lineAccountId, runId, skipped: "disabled" as const, status: "skipped" as const };
     }
 
     const reserved = await reserveAutoSendRun({
@@ -56,7 +75,7 @@ export async function GET(request: Request) {
     });
 
     if (!reserved) {
-      return jsonData({ runId, skipped: "already_ran" }, requestId);
+      return { lineAccountId, runId, skipped: "already_ran" as const, status: "skipped" as const };
     }
 
     const account = await getLineAccount(lineAccountId);
@@ -77,13 +96,13 @@ export async function GET(request: Request) {
       });
 
       await notifyAutoBroadcastResult({
+        accountDisplayName: account.displayName,
         failedCount: 0,
         lineAccountId,
         successCount: 0,
-        viewerSharedId: account.viewerSharedId,
       });
 
-      return jsonData({ run }, requestId);
+      return { lineAccountId, run, status: "success" as const };
     }
 
     const { text } = await generateDailyGreetingMessage({ today: startedAt });
@@ -111,62 +130,85 @@ export async function GET(request: Request) {
     });
 
     await notifyAutoBroadcastResult({
+      accountDisplayName: account.displayName,
       failedCount,
       lineAccountId,
       successCount,
-      viewerSharedId: account.viewerSharedId,
     });
 
-    return jsonData({ run }, requestId, failedCount > 0 ? 207 : 200);
+    return { lineAccountId, run, status: failedCount > 0 ? "partial_failed" as const : "success" as const };
   } catch (error) {
-    console.error("[cron-send-daily-message] failed", {
-      message: error instanceof Error ? error.message : String(error),
+    return saveDailyMessageFailureRun({ error, lineAccountId, requestId, runId, startedAt });
+  }
+}
+
+async function saveDailyMessageFailureRun({
+  error,
+  lineAccountId,
+  requestId,
+  runId,
+  startedAt,
+}: {
+  error: unknown;
+  lineAccountId: string;
+  requestId: string;
+  runId: string;
+  startedAt: Date;
+}) {
+  console.error("[cron-send-daily-message] account failed", {
+    lineAccountId,
+    message: error instanceof Error ? error.message : String(error),
+    requestId,
+    runId,
+  });
+
+  try {
+    const account = await getLineAccount(lineAccountId);
+    const settings = await getDailyBroadcastSettings(lineAccountId);
+    const selectedUsers = await listSelectedBroadcastUsers(lineAccountId);
+    const partialResult = getDailyGreetingGenerationPartialResult(error);
+    const messageText = partialResult?.text ?? "";
+    const targets = selectedUsers.map((user) => ({
+      errorCode: error instanceof Error ? error.message.slice(0, 80) : "AUTO_SEND_FAILED",
+      status: "failed" as const,
+      userId: user.userId,
+      userName: user.userName,
+    }));
+    const run = await saveSendRun({
+      historyRetentionDays: settings.historyRetentionDays,
+      lineAccountId,
+      messageText,
+      mode: "auto",
+      requestId,
+      runId,
+      sentAt: startedAt,
+      startedAt,
+      targets,
+      trigger: "cron",
+    });
+
+    await notifyAutoBroadcastResult({
+      accountDisplayName: account.displayName,
+      failedCount: targets.length,
+      lineAccountId,
+      successCount: 0,
+    });
+
+    return { lineAccountId, run, status: "failed" as const };
+  } catch (saveError) {
+    console.error("[cron-send-daily-message] failed to save failure run", {
+      lineAccountId,
+      message: saveError instanceof Error ? saveError.message : String(saveError),
       requestId,
       runId,
     });
 
-    try {
-      const account = await getLineAccount(lineAccountId);
-      const settings = await getDailyBroadcastSettings(lineAccountId);
-      const selectedUsers = await listSelectedBroadcastUsers(lineAccountId);
-      const partialResult = getDailyGreetingGenerationPartialResult(error);
-      const messageText = partialResult?.text ?? "";
-      const targets = selectedUsers.map((user) => ({
-        errorCode: error instanceof Error ? error.message.slice(0, 80) : "AUTO_SEND_FAILED",
-        status: "failed" as const,
-        userId: user.userId,
-        userName: user.userName,
-      }));
-      const run = await saveSendRun({
-        historyRetentionDays: settings.historyRetentionDays,
-        lineAccountId,
-        messageText,
-        mode: "auto",
-        requestId,
-        runId,
-        sentAt: startedAt,
-        startedAt,
-        targets,
-        trigger: "cron",
-      });
-
-      await notifyAutoBroadcastResult({
-        failedCount: targets.length,
-        lineAccountId,
-        successCount: 0,
-        viewerSharedId: account.viewerSharedId,
-      });
-
-      return jsonData({ run }, requestId, 207);
-    } catch (saveError) {
-      console.error("[cron-send-daily-message] failed to save failure run", {
-        message: saveError instanceof Error ? saveError.message : String(saveError),
-        requestId,
-        runId,
-      });
-
-      return jsonError(503, "SERVICE_UNAVAILABLE", "自動送信を実行できません。", requestId);
-    }
+    return {
+      error: saveError instanceof Error ? saveError.message : String(saveError),
+      lineAccountId,
+      runId,
+      status: "failed" as const,
+    };
   }
 }
 
@@ -190,20 +232,21 @@ function toSendRunTargets(
 }
 
 async function notifyAutoBroadcastResult({
+  accountDisplayName,
   failedCount,
   lineAccountId,
   successCount,
-  viewerSharedId,
 }: {
+  accountDisplayName: string;
   failedCount: number;
   lineAccountId: string;
   successCount: number;
-  viewerSharedId: string;
 }) {
   await sendPushNotificationsToViewers({
     lineAccountId,
-    payload: buildAutoBroadcastResultPushPayload(buildAutoBroadcastPushBody(successCount, failedCount)),
-    viewerSharedId,
+    payload: buildAutoBroadcastResultPushPayload(
+      `${accountDisplayName || "LINE"} ${buildAutoBroadcastPushBody(successCount, failedCount)}`,
+    ),
   }).catch((error) => {
     console.warn("[cron-send-daily-message] result push failed", {
       lineAccountId,

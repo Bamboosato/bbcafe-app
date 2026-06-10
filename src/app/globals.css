@@ -313,6 +313,19 @@ label {
   grid-column: 1 / -1;
 }
 
+.settings-note {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.settings-note span {
+  color: var(--muted);
+}
+
 .table-like {
   display: grid;
   gap: 8px;
@@ -774,7 +787,10 @@ label {
 }
 
 .send-run-modal {
+  align-content: start;
   gap: 12px;
+  grid-template-rows: auto;
+  overflow: auto;
 }
 
 .send-run-detail-meta,
@@ -812,6 +828,13 @@ label {
 .send-run-detail-section h3 {
   font-size: 16px;
   margin: 0;
+}
+
+.send-run-message-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0;
+  padding: 14px;
 }
 
 .failed-target-list,

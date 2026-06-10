@@ -1,17 +1,21 @@
-import { jsonData } from "@/lib/server/api-response";
+import { NextResponse } from "next/server";
 import { createRequestId } from "@/lib/server/request";
-import { readCookie, verifyViewerSessionCookie, VIEWER_SESSION_COOKIE } from "@/lib/server/session";
+import { clearAppSessionCookies } from "@/lib/server/session";
 
-export async function GET(request: Request) {
+export async function GET() {
   const requestId = createRequestId();
-  const payload = verifyViewerSessionCookie(readCookie(request, VIEWER_SESSION_COOKIE));
-
-  return jsonData(
-    {
-      authenticated: Boolean(payload),
-      lineAccountId: payload?.lineAccountId ?? null,
-      viewerSharedId: payload?.viewerSharedId ?? null,
+  const response = NextResponse.json({
+    data: {
+      authenticated: false,
+      lineAccountId: null,
+      viewerSharedId: null,
     },
-    requestId,
-  );
+    meta: {
+      requestId,
+    },
+  });
+
+  clearAppSessionCookies(response);
+
+  return response;
 }

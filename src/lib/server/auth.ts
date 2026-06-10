@@ -1,18 +1,16 @@
 import { jsonError } from "./api-response";
 import {
-  ADMIN_SESSION_COOKIE,
+  ACCOUNT_SESSION_COOKIE,
   readCookie,
-  verifyAdminSessionCookie,
-  verifyViewerSessionCookie,
-  VIEWER_SESSION_COOKIE,
+  verifyAccountSessionCookie,
 } from "./session";
 
 export function requireAdminSession(request: Request, requestId: string) {
-  const payload = verifyAdminSessionCookie(readCookie(request, ADMIN_SESSION_COOKIE));
+  const payload = verifyAccountSessionCookie(readCookie(request, ACCOUNT_SESSION_COOKIE));
 
   if (!payload) {
     return {
-      response: jsonError(401, "UNAUTHORIZED", "管理者ログインが必要です。", requestId),
+      response: jsonError(401, "UNAUTHORIZED", "ログインが必要です。", requestId),
     };
   }
 
@@ -22,7 +20,7 @@ export function requireAdminSession(request: Request, requestId: string) {
 }
 
 export function requireViewerSession(request: Request, requestId: string) {
-  const payload = verifyViewerSessionCookie(readCookie(request, VIEWER_SESSION_COOKIE));
+  const payload = verifyAccountSessionCookie(readCookie(request, ACCOUNT_SESSION_COOKIE));
 
   if (!payload) {
     return {

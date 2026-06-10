@@ -187,6 +187,7 @@ export async function runExpiredMessageDeletion(lineAccountId: string) {
       await writeCronRun({
         deletedCount,
         failedCount,
+        lineAccountId,
         protectedCount: recentSnapshot.size,
         runId,
         skippedReason,
@@ -212,6 +213,7 @@ export async function runExpiredMessageDeletion(lineAccountId: string) {
       await writeCronRun({
         deletedCount,
         failedCount,
+        lineAccountId,
         protectedCount: protectedDocs.length,
         runId,
         skippedReason,
@@ -268,6 +270,7 @@ export async function runExpiredMessageDeletion(lineAccountId: string) {
     await writeCronRun({
       deletedCount,
       failedCount,
+      lineAccountId,
       protectedCount: protectedDocs.length,
       runId,
       skippedReason,
@@ -289,6 +292,7 @@ export async function runExpiredMessageDeletion(lineAccountId: string) {
     await writeCronRun({
       deletedCount,
       failedCount,
+      lineAccountId,
       protectedCount: 0,
       runId,
       skippedReason: error instanceof Error ? error.message : "unknown_error",
@@ -299,10 +303,11 @@ export async function runExpiredMessageDeletion(lineAccountId: string) {
   }
 }
 
-export async function listCronRuns(limit = 20): Promise<CronRunView[]> {
+export async function listCronRuns(lineAccountId: string, limit = 20): Promise<CronRunView[]> {
   const db = getAdminDb();
   const snapshot = await db
     .collection("cronRuns")
+    .where("lineAccountId", "==", lineAccountId)
     .orderBy("startedAt", "desc")
     .limit(normalizeLimit(limit, 50))
     .get();
@@ -404,6 +409,7 @@ function toMessageView(record: MessageRecord): MessageView {
 async function writeCronRun(input: {
   deletedCount: number;
   failedCount: number;
+  lineAccountId: string;
   protectedCount: number;
   runId: string;
   skippedReason: null | string;
@@ -416,6 +422,7 @@ async function writeCronRun(input: {
     deletedCount: input.deletedCount,
     failedCount: input.failedCount,
     finishedAt: FieldValue.serverTimestamp(),
+    lineAccountId: input.lineAccountId,
     protectedCount: input.protectedCount,
     runId: input.runId,
     skippedReason: input.skippedReason,
@@ -430,6 +437,7 @@ function toCronRunView(runId: string, data: FirebaseFirestore.DocumentData): Cro
     deletedCount: Number(data.deletedCount ?? 0),
     failedCount: Number(data.failedCount ?? 0),
     finishedAt: toIsoString(data.finishedAt),
+    lineAccountId: String(data.lineAccountId ?? ""),
     protectedCount: Number(data.protectedCount ?? 0),
     runId,
     skippedReason: typeof data.skippedReason === "string" ? data.skippedReason : null,

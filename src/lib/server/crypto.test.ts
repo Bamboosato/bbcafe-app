@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createPasswordHash, safeStringEqual, verifyPasswordHash } from "./crypto";
+import { createPasswordHash, decryptSecret, encryptSecret, safeStringEqual, verifyPasswordHash } from "./crypto";
 import {
-  createViewerSessionCookieValue,
-  verifyAdminSessionCookie,
-  verifyViewerSessionCookie,
+  createAccountSessionCookieValue,
+  verifyAccountSessionCookie,
 } from "./session";
 
 describe("server crypto helpers", () => {
@@ -20,14 +19,28 @@ describe("server crypto helpers", () => {
     expect(safeStringEqual("abc", "abd")).toBe(false);
   });
 
-  it("verifies viewer session cookies by role", () => {
+  it("verifies account session cookies", () => {
     process.env.SESSION_SECRET = "test-secret";
 
-    const cookie = createViewerSessionCookieValue("default", 0, "bbcafe");
-    const payload = verifyViewerSessionCookie(cookie, 1000);
+    const cookie = createAccountSessionCookieValue({
+      email: "takes.ngo.jp@gmail.com",
+      lineAccountId: "default",
+      now: 0,
+      uid: "test-uid",
+    });
+    const payload = verifyAccountSessionCookie(cookie, 1000);
 
+    expect(payload?.email).toBe("takes.ngo.jp@gmail.com");
     expect(payload?.lineAccountId).toBe("default");
-    expect(payload?.viewerSharedId).toBe("bbcafe");
-    expect(verifyAdminSessionCookie(cookie, 1000)).toBeNull();
+    expect(payload?.uid).toBe("test-uid");
+  });
+
+  it("encrypts and decrypts stored secrets", () => {
+    process.env.APP_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
+
+    const encrypted = encryptSecret("line-secret");
+
+    expect(encrypted).not.toBe("line-secret");
+    expect(decryptSecret(encrypted)).toBe("line-secret");
   });
 });

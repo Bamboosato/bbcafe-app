@@ -47,6 +47,14 @@
         { "fieldPath": "mode", "order": "ASCENDING" },
         { "fieldPath": "sentAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "cronRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "lineAccountId", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

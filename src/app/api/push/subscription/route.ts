@@ -1,7 +1,6 @@
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireViewerSession } from "@/lib/server/auth";
 import { createRequestId, readJsonBody } from "@/lib/server/request";
-import { getLineAccount } from "@/features/messages/server/lineAccounts";
 import {
   deletePushSubscription,
   upsertPushSubscription,
@@ -19,7 +18,6 @@ export async function POST(request: Request) {
 
   try {
     const body = await readJsonBody(request);
-    const viewerSharedId = await resolveViewerSharedId(auth.payload.lineAccountId, auth.payload.viewerSharedId);
     const subscription =
       typeof body === "object" && body !== null && "subscription" in body
         ? (body as { subscription?: unknown }).subscription
@@ -27,8 +25,8 @@ export async function POST(request: Request) {
     const result = await upsertPushSubscription({
       lineAccountId: auth.payload.lineAccountId,
       subscription,
+      userId: auth.payload.uid,
       userAgent: request.headers.get("user-agent"),
-      viewerSharedId,
     });
 
     return jsonData({ subscribed: true, subscriptionId: result.subscriptionId }, requestId, 201);
@@ -47,7 +45,6 @@ export async function DELETE(request: Request) {
 
   try {
     const body = await readJsonBody(request);
-    const viewerSharedId = await resolveViewerSharedId(auth.payload.lineAccountId, auth.payload.viewerSharedId);
     const endpoint =
       typeof body === "object" && body !== null && "endpoint" in body
         ? (body as { endpoint?: unknown }).endpoint
@@ -56,23 +53,13 @@ export async function DELETE(request: Request) {
     await deletePushSubscription({
       endpoint,
       lineAccountId: auth.payload.lineAccountId,
-      viewerSharedId,
+      userId: auth.payload.uid,
     });
 
     return jsonData({ subscribed: false }, requestId);
   } catch (error) {
     return handlePushSubscriptionError(error, requestId);
   }
-}
-
-async function resolveViewerSharedId(lineAccountId: string, sessionViewerSharedId?: string) {
-  if (sessionViewerSharedId?.trim()) {
-    return sessionViewerSharedId.trim();
-  }
-
-  const account = await getLineAccount(lineAccountId);
-
-  return account.viewerSharedId;
 }
 
 function handlePushSubscriptionError(error: unknown, requestId: string) {

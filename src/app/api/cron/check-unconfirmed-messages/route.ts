@@ -1,4 +1,4 @@
-import { DEFAULT_LINE_ACCOUNT_ID, getLineAccount } from "@/features/messages/server/lineAccounts";
+import { getLineAccount, listActiveLineAccounts } from "@/features/messages/server/lineAccounts";
 import {
   buildConfirmationCheckSnapshot,
   buildUnconfirmedReminderPushBody,
@@ -32,7 +32,26 @@ export async function GET(request: Request) {
     return jsonError(401, "UNAUTHORIZED", "Cron認証に失敗しました。", requestId);
   }
 
-  const lineAccountId = DEFAULT_LINE_ACCOUNT_ID;
+  try {
+    const accounts = await listActiveLineAccounts();
+    const results = [];
+
+    for (const account of accounts) {
+      results.push(await runConfirmationReminderForLineAccount(account.lineAccountId, requestId));
+    }
+
+    return jsonData({ results }, requestId, results.some((result) => result.status === "failed") ? 207 : 200);
+  } catch (error) {
+    console.error("[cron-check-unconfirmed-messages] failed", {
+      message: error instanceof Error ? error.message : String(error),
+      requestId,
+    });
+
+    return jsonError(503, "SERVICE_UNAVAILABLE", "未確認メッセージを確認できません。", requestId);
+  }
+}
+
+async function runConfirmationReminderForLineAccount(lineAccountId: string, requestId: string) {
   const startedAt = new Date();
   const runId = createConfirmationReminderRunId(startedAt);
 
@@ -61,7 +80,7 @@ export async function GET(request: Request) {
         unconfirmedTargets: [],
       });
 
-      return jsonData({ remindedCount: 0, runId, skipped: "no_confirmation_targets" }, requestId);
+      return { lineAccountId, remindedCount: 0, runId, skipped: "no_confirmation_targets" as const, status: "skipped" as const };
     }
 
     if (!pendingTargets.length) {
@@ -77,20 +96,21 @@ export async function GET(request: Request) {
         status: "success",
       });
 
-      return jsonData({
+      return {
         confirmedCount: checkSnapshot.confirmedCount,
+        lineAccountId,
         remindedCount: 0,
         runId,
+        status: "success" as const,
         targetCount: checkSnapshot.targetCount,
         unconfirmedCount: checkSnapshot.unconfirmedCount,
-      }, requestId);
+      };
     }
 
     const body = buildUnconfirmedReminderPushBody(pendingTargets);
     const pushResult = await sendPushNotificationsToViewers({
       lineAccountId,
-      payload: buildUnconfirmedMessageReminderPushPayload(body),
-      viewerSharedId: account.viewerSharedId,
+      payload: buildUnconfirmedMessageReminderPushPayload(`${account.displayName || "LINE"} ${body}`),
     });
     const remindedCount = pushResult.skipped ? 0 : await markReminderSentForTargets(lineAccountId, pendingTargets);
     const status = toReminderRunStatus(pushResult);
@@ -107,19 +127,22 @@ export async function GET(request: Request) {
       status,
     });
 
-    return jsonData({
+    return {
       confirmedCount: checkSnapshot.confirmedCount,
+      lineAccountId,
       pushResult,
       remindedCount,
       runId,
+      status,
       targetCount: checkSnapshot.targetCount,
       unconfirmedCount: checkSnapshot.unconfirmedCount,
-    }, requestId);
+    };
   } catch (error) {
-    console.error("[cron-check-unconfirmed-messages] failed", {
+    console.error("[cron-check-unconfirmed-messages] account failed", {
       lineAccountId,
       message: error instanceof Error ? error.message : String(error),
       requestId,
+      runId,
     });
 
     await saveConfirmationReminderRun({
@@ -138,13 +161,19 @@ export async function GET(request: Request) {
       unconfirmedTargets: [],
     }).catch((writeError) => {
       console.error("[cron-check-unconfirmed-messages] failed to save run", {
+        lineAccountId,
         message: writeError instanceof Error ? writeError.message : String(writeError),
         requestId,
         runId,
       });
     });
 
-    return jsonError(503, "SERVICE_UNAVAILABLE", "未確認メッセージを確認できません。", requestId);
+    return {
+      error: error instanceof Error ? error.message : String(error),
+      lineAccountId,
+      runId,
+      status: "failed" as const,
+    };
   }
 }
 

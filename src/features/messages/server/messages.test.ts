@@ -23,6 +23,10 @@ describe("firestore index coverage", () => {
   it("defines the auto-send history index used by cron history", () => {
     expect(hasCollectionIndex("sendRuns", ["mode:ASCENDING", "sentAt:DESCENDING"])).toBe(true);
   });
+
+  it("defines the account-scoped delete cron history index", () => {
+    expect(hasCollectionIndex("cronRuns", ["lineAccountId:ASCENDING", "startedAt:DESCENDING"])).toBe(true);
+  });
 });
 
 describe("cron schedules", () => {
