@@ -1,4 +1,12 @@
-import { getDailyGreetingGenerationPartialResult, generateDailyGreetingMessage } from "@/features/messages/server/gemini";
+import {
+  buildRecentGreetingOpeningExamples,
+  getDailyGreetingGenerationPartialResult,
+  generateDailyGreetingMessage,
+} from "@/features/messages/server/gemini";
+import {
+  buildCalendarEventsSummary,
+  listTodayCalendarEvents,
+} from "@/features/messages/server/calendarEvents";
 import { getLineCredentials } from "@/features/messages/server/credentials";
 import { getLineAccount, listActiveLineAccounts } from "@/features/messages/server/lineAccounts";
 import { sendLineTextMessages } from "@/features/messages/server/outboundLine";
@@ -6,6 +14,7 @@ import {
   buildAutoBroadcastPushBody,
   createAutoSendRunId,
   getDailyBroadcastSettings,
+  listSendRuns,
   listSelectedBroadcastUsers,
   reserveAutoSendRun,
   saveSendRun,
@@ -105,7 +114,13 @@ async function runDailyMessageForLineAccount(lineAccountId: string, requestId: s
       return { lineAccountId, run, status: "success" as const };
     }
 
-    const { text } = await generateDailyGreetingMessage({ today: startedAt });
+    const todayCalendarEvents = await listTodayCalendarEvents(lineAccountId, startedAt);
+    const recentSendRuns = await listSendRuns(lineAccountId, 20);
+    const { text } = await generateDailyGreetingMessage({
+      calendarEventInfo: buildCalendarEventsSummary(todayCalendarEvents),
+      recentOpeningExamples: buildRecentGreetingOpeningExamples(recentSendRuns, startedAt),
+      today: startedAt,
+    });
     const credentials = await getLineCredentials(lineAccountId);
     const results = await sendLineTextMessages({
       channelAccessToken: credentials.channelAccessToken,

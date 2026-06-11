@@ -1,8 +1,14 @@
 import {
+  buildRecentGreetingOpeningExamples,
   generateDailyGreetingMessage,
   getDailyGreetingGenerationPartialResult,
   summarizeDailyGreetingGenerationError,
 } from "@/features/messages/server/gemini";
+import {
+  buildCalendarEventsSummary,
+  listTodayCalendarEvents,
+} from "@/features/messages/server/calendarEvents";
+import { listSendRuns } from "@/features/messages/server/broadcasts";
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireViewerSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
@@ -18,9 +24,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { location, text } = await generateDailyGreetingMessage();
+    const today = new Date();
+    const todayCalendarEvents = await listTodayCalendarEvents(auth.payload.lineAccountId, today);
+    const todayCalendarEventText = buildCalendarEventsSummary(todayCalendarEvents);
+    const recentSendRuns = await listSendRuns(auth.payload.lineAccountId, 20);
+    const { location, text } = await generateDailyGreetingMessage({
+      calendarEventInfo: todayCalendarEventText,
+      recentOpeningExamples: buildRecentGreetingOpeningExamples(recentSendRuns, today),
+      today,
+    });
 
-    return jsonData({ location, message: text }, requestId);
+    return jsonData({ location, message: text, todayCalendarEventText }, requestId);
   } catch (error) {
     const summary = summarizeDailyGreetingGenerationError(error);
 

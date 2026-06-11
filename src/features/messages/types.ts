@@ -35,6 +35,19 @@ export type UserInfoView = {
   userName: string;
 };
 
+export type CalendarEventView = {
+  createdAt: null | string;
+  day: number;
+  enabled: boolean;
+  eventId: string;
+  eventText: string;
+  lineAccountId: string;
+  month: number;
+  monthDay: string;
+  sortOrder: number;
+  updatedAt: null | string;
+};
+
 export type AutomationSettingsView = {
   enabled: boolean;
   historyRetentionDays: number;
