@@ -262,6 +262,22 @@ export async function listConfirmationTargets(lineAccountId: string) {
     .sort((left, right) => left.userName.localeCompare(right.userName, "ja") || left.userId.localeCompare(right.userId));
 }
 
+export async function listUnconfirmedConfirmationTargets(lineAccountId: string) {
+  const snapshot = await confirmationTargetsCollection(lineAccountId)
+    .where("status", "in", ["pending", "reminded"])
+    .limit(MAX_CONFIRMATION_REMINDERS)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => toConfirmationTargetRecord(lineAccountId, doc.id, doc.data()))
+    .sort(
+      (left, right) =>
+        right.sentAt.localeCompare(left.sentAt) ||
+        left.userName.localeCompare(right.userName, "ja") ||
+        left.userId.localeCompare(right.userId),
+    );
+}
+
 export function buildConfirmationCheckSnapshot(targets: ConfirmationTargetRecord[]) {
   const confirmedTargets = targets
     .filter((target) => target.status === "confirmed")
