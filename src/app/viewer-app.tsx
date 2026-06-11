@@ -31,7 +31,7 @@ import type {
   UserInfoView,
 } from "@/features/messages/types";
 
-type ViewerView = "calendar" | "cron-runs" | "generated-message" | "messages" | "sent" | "settings" | "users";
+type ViewerView = "calendar" | "cron-runs" | "generated-message" | "home" | "messages" | "sent" | "settings" | "users";
 
 type ApiEnvelope<T> = {
   data?: T;
@@ -119,9 +119,18 @@ type SendGeneratedMessageResponse = {
   totalCount: number;
 };
 
+type HomeConfirmationTarget = {
+  confirmationStatus: NonNullable<SendRunView["targets"][number]["confirmationStatus"]>;
+  reminderSentAt: null | string;
+  runId: string;
+  sentAt: string;
+  userId: string;
+  userName: string;
+};
+
 export default function ViewerApp({
   appVersion,
-  initialView = "messages",
+  initialView = "home",
 }: {
   appVersion: string;
   initialView?: ViewerView;
@@ -500,6 +509,13 @@ export default function ViewerApp({
     const timer = window.setTimeout(() => {
       if (currentView === "messages") {
         void loadMessages();
+      }
+
+      if (currentView === "home") {
+        void loadSentRuns();
+        void loadUsers();
+        void loadCalendarEvents();
+        void loadCronHistory();
       }
 
       if (currentView === "users") {
@@ -1333,6 +1349,23 @@ export default function ViewerApp({
         </section>
       ) : null}
 
+      {currentView === "home" ? (
+        <HomeScreen
+          cronHistoryItems={cronHistoryItems}
+          loading={loadingSentRuns || loadingUsers || loadingCalendarEvents || loadingCronHistory}
+          onOpenCalendar={() => navigateToView("calendar")}
+          onOpenCron={() => navigateToView("cron-runs")}
+          onOpenGeneratedMessage={showGeneratedMessageView}
+          onOpenMessages={() => navigateToView("messages")}
+          onOpenSent={() => navigateToView("sent")}
+          onOpenSettings={() => navigateToView("settings")}
+          onOpenUsers={showUserInfoView}
+          sentRuns={sentRuns}
+          todayCalendarEvents={todayCalendarEvents}
+          users={users}
+        />
+      ) : null}
+
       {currentView === "users" ? (
         <UserInfoScreen
           loading={loadingUsers}
@@ -1420,6 +1453,7 @@ export default function ViewerApp({
 }
 
 const VIEW_ITEMS: Array<{ label: string; view: ViewerView }> = [
+  { label: "ホーム", view: "home" },
   { label: "受信履歴", view: "messages" },
   { label: "送信履歴", view: "sent" },
   { label: "Cron履歴", view: "cron-runs" },
@@ -1480,6 +1514,10 @@ function NavMenuItems({
 }
 
 function routeForView(view: ViewerView) {
+  if (view === "home") {
+    return "/";
+  }
+
   if (view === "settings") {
     return "/settings";
   }
@@ -1504,7 +1542,231 @@ function routeForView(view: ViewerView) {
     return "/calendar";
   }
 
-  return "/";
+  return "/messages";
+}
+
+function HomeScreen({
+  cronHistoryItems,
+  loading,
+  onOpenCalendar,
+  onOpenCron,
+  onOpenGeneratedMessage,
+  onOpenMessages,
+  onOpenSent,
+  onOpenSettings,
+  onOpenUsers,
+  sentRuns,
+  todayCalendarEvents,
+  users,
+}: {
+  cronHistoryItems: CronHistoryItemView[];
+  loading: boolean;
+  onOpenCalendar: () => void;
+  onOpenCron: () => void;
+  onOpenGeneratedMessage: () => void;
+  onOpenMessages: () => void;
+  onOpenSent: () => void;
+  onOpenSettings: () => void;
+  onOpenUsers: () => void;
+  sentRuns: SendRunView[];
+  todayCalendarEvents: CalendarEventView[];
+  users: UserInfoView[];
+}) {
+  const latestConfirmationTargets = buildLatestHomeConfirmationTargets(sentRuns);
+  const unconfirmedTargets = latestConfirmationTargets.filter(isHomeUnconfirmedTarget);
+  const latestConfirmationCheck = cronHistoryItems.find((item) => item.kind === "check_unconfirmed_messages");
+  const latestCronIssue = cronHistoryItems.find((item) => item.status === "failed" || item.status === "partial_failed");
+  const todayAutoRun = sentRuns.find((run) => run.mode === "auto" && isSameDateInJapan(run.sentAt, new Date()));
+  const recentSendRuns = sentRuns.slice(0, 2);
+  const selectedUserCount = users.filter((user) => user.broadcastSelected).length;
+  const notifiedUnconfirmedCount = unconfirmedTargets.filter(
+    (target) => target.confirmationStatus === "reminded" || Boolean(target.reminderSentAt),
+  ).length;
+  const todayEventsText = formatCalendarEventsText(todayCalendarEvents);
+  const hasUnconfirmed = unconfirmedTargets.length > 0;
+  const homeHeroClassName = `home-hero ${hasUnconfirmed ? "has-unconfirmed" : ""}`;
+
+  return (
+    <section className="home-screen">
+      <div className={homeHeroClassName}>
+        <div className="home-title">
+          <h2>ホーム</h2>
+          <p className="status-text">
+            未確認メッセージを最優先でフォローし、今日の運用状況を確認します。
+          </p>
+          {loading ? <p className="status-text">ホームを更新中です。</p> : null}
+        </div>
+
+        {hasUnconfirmed ? (
+          <section className="home-unconfirmed-card" aria-label="未確認メッセージ">
+            <div className="home-unconfirmed-heading">
+              <span aria-hidden="true" className="home-warning-mark">!</span>
+              <div>
+                <h3>未確認メッセージがあります</h3>
+                <div className="home-unconfirmed-count">
+                  <strong>{unconfirmedTargets.length}名</strong>
+                  <span>確認ボタンが押されていない送信先</span>
+                </div>
+              </div>
+            </div>
+            <dl className="home-unconfirmed-details">
+              <div>
+                <dt>対象</dt>
+                <dd>{formatHomeTargetNames(unconfirmedTargets)}</dd>
+              </div>
+              <div>
+                <dt>最終確認チェック</dt>
+                <dd>
+                  {latestConfirmationCheck
+                    ? `${formatTime(latestConfirmationCheck.startedAt)} / 通知済み ${notifiedUnconfirmedCount}名`
+                    : `未実行 / 通知済み ${notifiedUnconfirmedCount}名`}
+                </dd>
+              </div>
+            </dl>
+            <div className="home-unconfirmed-actions">
+              <button onClick={onOpenSent} type="button">
+                送信履歴で確認
+              </button>
+              <button className="secondary" onClick={onOpenCron} type="button">
+                Cron履歴
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        <div className="home-shortcut-actions">
+          <button onClick={onOpenGeneratedMessage} type="button">
+            メッセージ作成
+          </button>
+          <button className="secondary" onClick={onOpenMessages} type="button">
+            受信履歴を確認
+          </button>
+        </div>
+      </div>
+
+      <section className="home-status-grid" aria-label="今日の状況">
+        <HomeStatusCard
+          badge={todayAutoRun ? formatTimeOnly(todayAutoRun.sentAt) : "未実行"}
+          description={
+            todayAutoRun
+              ? `対象 ${todayAutoRun.targetCount} / 成功 ${todayAutoRun.successCount} / 失敗 ${todayAutoRun.failedCount}`
+              : "今日の自動送信履歴はまだありません。"
+          }
+          label="今日の自動送信"
+          tone={todayAutoRun?.status === "failed" || todayAutoRun?.status === "partial_failed" ? "warning" : "normal"}
+          value={todayAutoRun ? formatSendRunStatus(todayAutoRun.status) : "未実行"}
+        />
+        <HomeStatusCard
+          badge={hasUnconfirmed ? `${notifiedUnconfirmedCount}名通知済み` : "0件"}
+          description={hasUnconfirmed ? "未確認者のフォロー状況を確認してください。" : "確認待ちはありません。"}
+          label="未確認フォロー"
+          tone={hasUnconfirmed ? "warning" : "normal"}
+          value={hasUnconfirmed ? `${unconfirmedTargets.length}名` : "なし"}
+        />
+        <HomeStatusCard
+          badge={todayEventsText ? "予定あり" : "通常運用"}
+          description={todayEventsText || "登録がある日は挨拶文の最優先ネタです。"}
+          label="今日のカレンダー情報"
+          tone="normal"
+          value={todayEventsText ? "あり" : "なし"}
+        />
+        <HomeStatusCard
+          badge={latestCronIssue ? formatCronHistoryKind(latestCronIssue.kind) : hasUnconfirmed ? `未確認 ${unconfirmedTargets.length}名` : "失敗なし"}
+          description={latestCronIssue ? "直近のCron履歴を確認してください。" : "送信失敗はありません。"}
+          label="Cron履歴"
+          tone={latestCronIssue || hasUnconfirmed ? "warning" : "normal"}
+          value={latestCronIssue || hasUnconfirmed ? "注意あり" : "正常"}
+        />
+      </section>
+
+      <section className={`home-content-grid ${hasUnconfirmed ? "" : "without-unconfirmed"}`}>
+        {hasUnconfirmed ? (
+          <section className="panel home-target-panel">
+            <div className="home-panel-header">
+              <h3>未確認の対象</h3>
+              <button className="secondary" onClick={onOpenSent} type="button">
+                送信履歴
+              </button>
+            </div>
+            <div className="home-target-list">
+              {unconfirmedTargets.map((target) => (
+                <div className="home-target-row" key={target.userId}>
+                  <strong>{target.userName}</strong>
+                  <span>{formatTime(target.sentAt)} 送信分 / {formatConfirmationStatus(target.confirmationStatus)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <section className="panel home-recent-send-panel">
+          <div className="home-panel-header">
+            <h3>直近の送信</h3>
+            <button className="secondary" onClick={onOpenSent} type="button">
+              送信履歴
+            </button>
+          </div>
+          {recentSendRuns.length ? (
+            <div className="home-recent-send-list">
+              {recentSendRuns.map((run) => (
+                <div className="home-recent-send-row" key={run.runId}>
+                  <span className="message-meta">
+                    <strong>{formatSendRunMode(run.mode)}</strong>
+                    <span>{formatTime(run.sentAt)}</span>
+                    <span>{formatSendRunStatus(run.status)}</span>
+                  </span>
+                  <p>{run.messageText || "本文は保存されていません。"}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="status-text">送信履歴はありません。</p>
+          )}
+        </section>
+
+        <section className="panel home-shortcut-panel">
+          <div className="home-panel-header">
+            <h3>よく使う画面</h3>
+          </div>
+          <div className="home-secondary-actions">
+            <button className="secondary" onClick={onOpenUsers} type="button">
+              ユーザ情報
+            </button>
+            <button className="secondary" onClick={onOpenCalendar} type="button">
+              カレンダー情報
+            </button>
+            <button className="secondary" onClick={onOpenSettings} type="button">
+              管理画面
+            </button>
+          </div>
+          <p className="status-text">現在の送信対象ユーザは{selectedUserCount}名です。</p>
+        </section>
+      </section>
+    </section>
+  );
+}
+
+function HomeStatusCard({
+  badge,
+  description,
+  label,
+  tone,
+  value,
+}: {
+  badge: string;
+  description: string;
+  label: string;
+  tone: "normal" | "warning";
+  value: string;
+}) {
+  return (
+    <article className={`home-status-card ${tone === "warning" ? "warning" : ""}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <em>{badge}</em>
+      <p>{description}</p>
+    </article>
+  );
 }
 
 function CommonSettingsScreen({
@@ -2435,6 +2697,83 @@ function SendRunDetailModal({ run, onClose }: { run: SendRunView | null; onClose
       </div>
     </div>
   );
+}
+
+function buildLatestHomeConfirmationTargets(runs: SendRunView[]): HomeConfirmationTarget[] {
+  const targetsByUserId = new Map<string, HomeConfirmationTarget>();
+
+  for (const run of runs) {
+    for (const target of run.targets) {
+      if (target.status !== "success" || !target.userId || targetsByUserId.has(target.userId)) {
+        continue;
+      }
+
+      const confirmationStatus = target.confirmationStatus ?? "not_required";
+
+      if (confirmationStatus === "not_required") {
+        continue;
+      }
+
+      targetsByUserId.set(target.userId, {
+        confirmationStatus,
+        reminderSentAt: target.reminderSentAt ?? null,
+        runId: run.runId,
+        sentAt: run.sentAt,
+        userId: target.userId,
+        userName: target.userName,
+      });
+    }
+  }
+
+  return Array.from(targetsByUserId.values()).sort(
+    (left, right) =>
+      right.sentAt.localeCompare(left.sentAt) ||
+      left.userName.localeCompare(right.userName, "ja") ||
+      left.userId.localeCompare(right.userId),
+  );
+}
+
+function isHomeUnconfirmedTarget(target: HomeConfirmationTarget) {
+  return target.confirmationStatus === "pending" || target.confirmationStatus === "reminded";
+}
+
+function formatHomeTargetNames(targets: HomeConfirmationTarget[]) {
+  if (!targets.length) {
+    return "なし";
+  }
+
+  if (targets.length <= 3) {
+    return targets.map((target) => target.userName).join("、");
+  }
+
+  const [first, ...rest] = targets;
+
+  return `${first.userName}さんほか${rest.length}名`;
+}
+
+function isSameDateInJapan(value: string, date: Date) {
+  return formatDateKeyInJapan(new Date(value)) === formatDateKeyInJapan(date);
+}
+
+function formatDateKeyInJapan(date: Date) {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "00";
+  const day = parts.find((part) => part.type === "day")?.value ?? "00";
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatTimeOnly(value: string) {
+  return new Intl.DateTimeFormat("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function sourceLabel(message: MessageView) {
