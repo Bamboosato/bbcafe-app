@@ -49,10 +49,15 @@ type SessionResponse = {
 
 type MessagesResponse = {
   messages: MessageView[];
+  nextCursor: null | string;
 };
 
 type UsersResponse = {
   users: UserInfoView[];
+};
+
+type UsersSummaryResponse = {
+  selectedUserCount: number;
 };
 
 type UserResponse = {
@@ -79,6 +84,7 @@ type MessageResponse = {
 };
 
 type SentRunsResponse = {
+  nextCursor: null | string;
   runs: SendRunView[];
 };
 
@@ -128,6 +134,42 @@ type HomeConfirmationTarget = {
   userName: string;
 };
 
+type ConfirmationTargetsResponse = {
+  targets: HomeConfirmationTarget[];
+};
+
+const HISTORY_PAGE_LIMIT = 20;
+
+function buildHistoryPageUrl(path: string, cursor: null | string) {
+  const params = new URLSearchParams({ limit: String(HISTORY_PAGE_LIMIT) });
+
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+
+  return `${path}?${params.toString()}`;
+}
+
+function mergeMessagePages(current: MessageView[], incoming: MessageView[]) {
+  const messagesById = new Map(current.map((message) => [message.messageId, message]));
+
+  incoming.forEach((message) => messagesById.set(message.messageId, message));
+
+  return [...messagesById.values()].sort(
+    (left, right) => right.sentAt.localeCompare(left.sentAt) || right.messageId.localeCompare(left.messageId),
+  );
+}
+
+function mergeSendRunPages(current: SendRunView[], incoming: SendRunView[]) {
+  const runsById = new Map(current.map((run) => [run.runId, run]));
+
+  incoming.forEach((run) => runsById.set(run.runId, run));
+
+  return [...runsById.values()].sort(
+    (left, right) => right.sentAt.localeCompare(left.sentAt) || right.runId.localeCompare(left.runId),
+  );
+}
+
 export default function ViewerApp({
   appVersion,
   initialView = "home",
@@ -143,8 +185,12 @@ export default function ViewerApp({
   const [password, setPassword] = useState("");
   const [resetMode, setResetMode] = useState(false);
   const [messages, setMessages] = useState<MessageView[]>([]);
+  const [messagesNextCursor, setMessagesNextCursor] = useState<null | string>(null);
   const [sentRuns, setSentRuns] = useState<SendRunView[]>([]);
+  const [sentRunsNextCursor, setSentRunsNextCursor] = useState<null | string>(null);
+  const [confirmationTargets, setConfirmationTargets] = useState<HomeConfirmationTarget[]>([]);
   const [users, setUsers] = useState<UserInfoView[]>([]);
+  const [selectedUserCount, setSelectedUserCount] = useState(0);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEventView[]>([]);
   const [todayCalendarEvents, setTodayCalendarEvents] = useState<CalendarEventView[]>([]);
   const [commonSettings, setCommonSettings] = useState<CommonSettingsView | null>(null);
@@ -171,8 +217,12 @@ export default function ViewerApp({
   const [pushSupported, setPushSupported] = useState(false);
   const [pushUpdating, setPushUpdating] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [loadingSentRuns, setLoadingSentRuns] = useState(false);
+  const [loadingMoreSentRuns, setLoadingMoreSentRuns] = useState(false);
+  const [loadingConfirmationTargets, setLoadingConfirmationTargets] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingUsersSummary, setLoadingUsersSummary] = useState(false);
   const [loadingCalendarEvents, setLoadingCalendarEvents] = useState(false);
   const [loadingCommonSettings, setLoadingCommonSettings] = useState(false);
   const [loadingCronHistory, setLoadingCronHistory] = useState(false);
@@ -186,7 +236,11 @@ export default function ViewerApp({
   const authenticatedRef = useRef(false);
   const loadingMessagesRef = useRef(false);
   const loadingSentRunsRef = useRef(false);
+  const messagesNextCursorRef = useRef<null | string>(null);
+  const sentRunsNextCursorRef = useRef<null | string>(null);
+  const loadingConfirmationTargetsRef = useRef(false);
   const loadingUsersRef = useRef(false);
+  const loadingUsersSummaryRef = useRef(false);
   const loadingCalendarEventsRef = useRef(false);
   const loadingCommonSettingsRef = useRef(false);
   const loadingCronHistoryRef = useRef(false);
@@ -218,17 +272,24 @@ export default function ViewerApp({
     }
   }, [appVersion]);
 
-  const loadMessages = useCallback(async () => {
+  const loadMessages = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
     if (loadingMessagesRef.current) {
       return;
     }
 
+    const cursor = append ? messagesNextCursorRef.current : null;
+
+    if (append && !cursor) {
+      return;
+    }
+
     loadingMessagesRef.current = true;
-    setLoadingMessages(true);
+    setLoadingMessages(!append);
+    setLoadingMoreMessages(append);
     setError("");
 
     try {
-      const result = await fetchJson<MessagesResponse>("/api/messages?limit=100", {
+      const result = await fetchJson<MessagesResponse>(buildHistoryPageUrl("/api/messages", cursor), {
         cache: "no-store",
       });
 
@@ -238,6 +299,20 @@ export default function ViewerApp({
       }
 
       const nextMessages = result.data?.messages ?? [];
+      const nextCursor = result.data?.nextCursor ?? null;
+      messagesNextCursorRef.current = nextCursor;
+      setMessagesNextCursor(nextCursor);
+
+      if (append) {
+        setMessages((current) => mergeMessagePages(current, nextMessages));
+        setStatus(
+          nextMessages.length
+            ? `追加読込: ${nextMessages.length}件 / ${formatTime(new Date().toISOString())}`
+            : "追加で読み込める受信履歴はありません。",
+        );
+        return;
+      }
+
       setMessages(nextMessages);
 
       setSelectedMessage((current) =>
@@ -248,6 +323,7 @@ export default function ViewerApp({
     } finally {
       loadingMessagesRef.current = false;
       setLoadingMessages(false);
+      setLoadingMoreMessages(false);
     }
   }, []);
 
@@ -275,6 +351,33 @@ export default function ViewerApp({
     } finally {
       loadingUsersRef.current = false;
       setLoadingUsers(false);
+    }
+  }, []);
+
+  const loadUsersSummary = useCallback(async () => {
+    if (loadingUsersSummaryRef.current) {
+      return;
+    }
+
+    loadingUsersSummaryRef.current = true;
+    setLoadingUsersSummary(true);
+    setError("");
+
+    try {
+      const result = await fetchJson<UsersSummaryResponse>("/api/users/summary", {
+        cache: "no-store",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      setSelectedUserCount(result.data?.selectedUserCount ?? 0);
+      setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
+    } finally {
+      loadingUsersSummaryRef.current = false;
+      setLoadingUsersSummary(false);
     }
   }, []);
 
@@ -306,17 +409,24 @@ export default function ViewerApp({
     }
   }, []);
 
-  const loadSentRuns = useCallback(async () => {
+  const loadSentRuns = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
     if (loadingSentRunsRef.current) {
       return;
     }
 
+    const cursor = append ? sentRunsNextCursorRef.current : null;
+
+    if (append && !cursor) {
+      return;
+    }
+
     loadingSentRunsRef.current = true;
-    setLoadingSentRuns(true);
+    setLoadingSentRuns(!append);
+    setLoadingMoreSentRuns(append);
     setError("");
 
     try {
-      const result = await fetchJson<SentRunsResponse>("/api/sent-messages?limit=100", {
+      const result = await fetchJson<SentRunsResponse>(buildHistoryPageUrl("/api/sent-messages", cursor), {
         cache: "no-store",
       });
 
@@ -326,6 +436,20 @@ export default function ViewerApp({
       }
 
       const nextRuns = result.data?.runs ?? [];
+      const nextCursor = result.data?.nextCursor ?? null;
+      sentRunsNextCursorRef.current = nextCursor;
+      setSentRunsNextCursor(nextCursor);
+
+      if (append) {
+        setSentRuns((current) => mergeSendRunPages(current, nextRuns));
+        setStatus(
+          nextRuns.length
+            ? `追加読込: ${nextRuns.length}件 / ${formatTime(new Date().toISOString())}`
+            : "追加で読み込める送信履歴はありません。",
+        );
+        return;
+      }
+
       setSentRuns(nextRuns);
       setSelectedSendRun((current) =>
         current && !nextRuns.some((run) => run.runId === current.runId) ? null : current,
@@ -334,6 +458,34 @@ export default function ViewerApp({
     } finally {
       loadingSentRunsRef.current = false;
       setLoadingSentRuns(false);
+      setLoadingMoreSentRuns(false);
+    }
+  }, []);
+
+  const loadConfirmationTargets = useCallback(async () => {
+    if (loadingConfirmationTargetsRef.current) {
+      return;
+    }
+
+    loadingConfirmationTargetsRef.current = true;
+    setLoadingConfirmationTargets(true);
+    setError("");
+
+    try {
+      const result = await fetchJson<ConfirmationTargetsResponse>("/api/confirmation-targets", {
+        cache: "no-store",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      setConfirmationTargets(result.data?.targets ?? []);
+      setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
+    } finally {
+      loadingConfirmationTargetsRef.current = false;
+      setLoadingConfirmationTargets(false);
     }
   }, []);
 
@@ -430,6 +582,14 @@ export default function ViewerApp({
     }
   }, [currentView, loadMessages]);
 
+  const loadMoreMessages = useCallback(() => {
+    void loadMessages({ append: true });
+  }, [loadMessages]);
+
+  const loadMoreSentRuns = useCallback(() => {
+    void loadSentRuns({ append: true });
+  }, [loadSentRuns]);
+
   const establishSession = useCallback(async (idToken: string) => {
     const result = await fetchJson<SessionResponse>("/api/auth/login", {
       body: JSON.stringify({ idToken }),
@@ -513,7 +673,8 @@ export default function ViewerApp({
 
       if (currentView === "home") {
         void loadSentRuns();
-        void loadUsers();
+        void loadConfirmationTargets();
+        void loadUsersSummary();
         void loadCalendarEvents();
         void loadCronHistory();
       }
@@ -523,9 +684,6 @@ export default function ViewerApp({
       }
 
       if (currentView === "generated-message") {
-        if (users.length === 0) {
-          void loadUsers();
-        }
         void loadAutomationSettings();
         void loadCalendarEvents();
       }
@@ -554,12 +712,21 @@ export default function ViewerApp({
     loadAutomationSettings,
     loadCalendarEvents,
     loadCommonSettings,
+    loadConfirmationTargets,
     loadCronHistory,
     loadMessages,
     loadSentRuns,
     loadUsers,
-    users.length,
+    loadUsersSummary,
   ]);
+
+  useEffect(() => {
+    if (!authenticated || currentView !== "generated-message" || users.length > 0) {
+      return;
+    }
+
+    void loadUsers();
+  }, [authenticated, currentView, loadUsers, users.length]);
 
   useEffect(() => {
     authenticatedRef.current = authenticated;
@@ -877,8 +1044,20 @@ export default function ViewerApp({
     setNavMenuOpen(false);
     setMessageFilter("all");
     setMessages([]);
+    setMessagesNextCursor(null);
+    messagesNextCursorRef.current = null;
+    setLoadingMoreMessages(false);
     setSentRuns([]);
+    setSentRunsNextCursor(null);
+    sentRunsNextCursorRef.current = null;
+    setLoadingMoreSentRuns(false);
+    setConfirmationTargets([]);
+    setLoadingConfirmationTargets(false);
+    loadingConfirmationTargetsRef.current = false;
     setUsers([]);
+    setSelectedUserCount(0);
+    setLoadingUsersSummary(false);
+    loadingUsersSummaryRef.current = false;
     setManualSendUserIds([]);
     selectableManualSendUserIdsRef.current = [];
     setCalendarEvents([]);
@@ -931,6 +1110,7 @@ export default function ViewerApp({
     setUsers((current) =>
       current.map((user) => (user.userId === userId ? result.data?.user ?? user : user)),
     );
+    setSelectedUserCount((current) => Math.max(0, current + (selected ? 1 : -1)));
   }
 
   function handleManualSendUserSelectionChange(userId: string, selected: boolean) {
@@ -1058,6 +1238,7 @@ export default function ViewerApp({
           : `${sentCount}件のユーザに送信しました。`,
       );
       void loadSentRuns();
+      void loadConfirmationTargets();
     } finally {
       setSendingGeneratedMessage(false);
     }
@@ -1337,9 +1518,12 @@ export default function ViewerApp({
         <section className="message-layout">
           <MessageList
             filter={messageFilter}
+            hasMore={Boolean(messagesNextCursor)}
             loading={loadingMessages}
+            loadingMore={loadingMoreMessages}
             messages={filteredMessages}
             onFilterChange={handleFilterChange}
+            onLoadMore={loadMoreMessages}
             onRefresh={() => void loadMessages()}
             onSelect={handleSelect}
             selectedId={selectedId}
@@ -1351,8 +1535,15 @@ export default function ViewerApp({
 
       {currentView === "home" ? (
         <HomeScreen
+          confirmationTargets={confirmationTargets}
           cronHistoryItems={cronHistoryItems}
-          loading={loadingSentRuns || loadingUsers || loadingCalendarEvents || loadingCronHistory}
+          loading={
+            loadingSentRuns ||
+            loadingConfirmationTargets ||
+            loadingUsersSummary ||
+            loadingCalendarEvents ||
+            loadingCronHistory
+          }
           onOpenCalendar={() => navigateToView("calendar")}
           onOpenCron={() => navigateToView("cron-runs")}
           onOpenGeneratedMessage={showGeneratedMessageView}
@@ -1360,9 +1551,9 @@ export default function ViewerApp({
           onOpenSent={() => navigateToView("sent")}
           onOpenSettings={() => navigateToView("settings")}
           onOpenUsers={showUserInfoView}
+          selectedUserCount={selectedUserCount}
           sentRuns={sentRuns}
           todayCalendarEvents={todayCalendarEvents}
-          users={users}
         />
       ) : null}
 
@@ -1393,8 +1584,11 @@ export default function ViewerApp({
       {currentView === "sent" ? (
         <SentHistoryScreen
           filter={sendRunFilter}
+          hasMore={Boolean(sentRunsNextCursor)}
           loading={loadingSentRuns}
+          loadingMore={loadingMoreSentRuns}
           onFilterChange={setSendRunFilter}
+          onLoadMore={loadMoreSentRuns}
           onRefresh={() => void loadSentRuns()}
           onSelect={(run) => void handleSelectSendRun(run)}
           runs={filteredSentRuns}
@@ -1546,6 +1740,7 @@ function routeForView(view: ViewerView) {
 }
 
 function HomeScreen({
+  confirmationTargets,
   cronHistoryItems,
   loading,
   onOpenCalendar,
@@ -1555,10 +1750,11 @@ function HomeScreen({
   onOpenSent,
   onOpenSettings,
   onOpenUsers,
+  selectedUserCount,
   sentRuns,
   todayCalendarEvents,
-  users,
 }: {
+  confirmationTargets: HomeConfirmationTarget[];
   cronHistoryItems: CronHistoryItemView[];
   loading: boolean;
   onOpenCalendar: () => void;
@@ -1568,17 +1764,17 @@ function HomeScreen({
   onOpenSent: () => void;
   onOpenSettings: () => void;
   onOpenUsers: () => void;
+  selectedUserCount: number;
   sentRuns: SendRunView[];
   todayCalendarEvents: CalendarEventView[];
-  users: UserInfoView[];
 }) {
-  const latestConfirmationTargets = buildLatestHomeConfirmationTargets(sentRuns);
-  const unconfirmedTargets = latestConfirmationTargets.filter(isHomeUnconfirmedTarget);
+  const unconfirmedTargets = confirmationTargets
+    .filter(isHomeUnconfirmedTarget)
+    .sort(compareHomeConfirmationTargets);
   const latestConfirmationCheck = cronHistoryItems.find((item) => item.kind === "check_unconfirmed_messages");
   const latestCronIssue = cronHistoryItems.find((item) => item.status === "failed" || item.status === "partial_failed");
   const todayAutoRun = sentRuns.find((run) => run.mode === "auto" && isSameDateInJapan(run.sentAt, new Date()));
   const recentSendRuns = sentRuns.slice(0, 2);
-  const selectedUserCount = users.filter((user) => user.broadcastSelected).length;
   const notifiedUnconfirmedCount = unconfirmedTargets.filter(
     (target) => target.confirmationStatus === "reminded" || Boolean(target.reminderSentAt),
   ).length;
@@ -1587,14 +1783,13 @@ function HomeScreen({
   const homeHeroClassName = `home-hero ${hasUnconfirmed ? "has-unconfirmed" : ""}`;
 
   return (
-    <section className="home-screen">
+    <section aria-busy={loading} className="home-screen">
       <div className={homeHeroClassName}>
         <div className="home-title">
           <h2>ホーム</h2>
           <p className="status-text">
             未確認メッセージを最優先でフォローし、今日の運用状況を確認します。
           </p>
-          {loading ? <p className="status-text">ホームを更新中です。</p> : null}
         </div>
 
         {hasUnconfirmed ? (
@@ -2304,10 +2499,55 @@ function CalendarEventDraftFields({
   );
 }
 
+function HistoryLoadMore({
+  autoLoad,
+  disabled,
+  loading,
+  onLoadMore,
+}: {
+  autoLoad: boolean;
+  disabled: boolean;
+  loading: boolean;
+  onLoadMore: () => void;
+}) {
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!autoLoad || disabled || !sentinelRef.current || !("IntersectionObserver" in window)) {
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          onLoadMore();
+        }
+      },
+      { rootMargin: "160px" },
+    );
+
+    observer.observe(sentinelRef.current);
+
+    return () => observer.disconnect();
+  }, [autoLoad, disabled, onLoadMore]);
+
+  return (
+    <div className="history-load-more">
+      <div aria-hidden="true" className="history-load-more-sentinel" ref={sentinelRef} />
+      <button className="secondary" disabled={disabled} onClick={onLoadMore} type="button">
+        {loading ? "読込中..." : "さらに読み込む"}
+      </button>
+    </div>
+  );
+}
+
 function SentHistoryScreen({
   filter,
+  hasMore,
   loading,
+  loadingMore,
   onFilterChange,
+  onLoadMore,
   onRefresh,
   onSelect,
   runs,
@@ -2315,8 +2555,11 @@ function SentHistoryScreen({
   totalCount,
 }: {
   filter: SendRunFilter;
+  hasMore: boolean;
   loading: boolean;
+  loadingMore: boolean;
   onFilterChange: (filter: SendRunFilter) => void;
+  onLoadMore: () => void;
   onRefresh: () => void;
   onSelect: (run: SendRunView) => void;
   runs: SendRunView[];
@@ -2368,6 +2611,15 @@ function SentHistoryScreen({
           {totalCount ? "このフィルターに該当する送信履歴はありません。" : "送信履歴はありません。"}
         </div>
       )}
+
+      {hasMore ? (
+        <HistoryLoadMore
+          autoLoad={filter === "all" && runs.length >= HISTORY_PAGE_LIMIT}
+          disabled={loading || loadingMore}
+          loading={loadingMore}
+          onLoadMore={onLoadMore}
+        />
+      ) : null}
     </section>
   );
 }
@@ -2523,9 +2775,12 @@ function GeneratedMessageScreen({
 
 function MessageList({
   filter,
+  hasMore,
   loading,
+  loadingMore,
   messages,
   onFilterChange,
+  onLoadMore,
   onRefresh,
   onSelect,
   selectedId,
@@ -2533,9 +2788,12 @@ function MessageList({
   totalCount,
 }: {
   filter: MessageFilter;
+  hasMore: boolean;
   loading: boolean;
+  loadingMore: boolean;
   messages: MessageView[];
   onFilterChange: (filter: MessageFilter) => void;
+  onLoadMore: () => void;
   onRefresh: () => void;
   onSelect: (messageId: string) => void;
   selectedId: null | string;
@@ -2589,6 +2847,15 @@ function MessageList({
           {totalCount ? "このフィルターに該当するメッセージはありません。" : "表示できるメッセージはありません。"}
         </div>
       )}
+
+      {hasMore ? (
+        <HistoryLoadMore
+          autoLoad={filter === "all" && messages.length >= HISTORY_PAGE_LIMIT}
+          disabled={loading || loadingMore}
+          loading={loadingMore}
+          onLoadMore={onLoadMore}
+        />
+      ) : null}
     </>
   );
 }
@@ -2699,42 +2966,16 @@ function SendRunDetailModal({ run, onClose }: { run: SendRunView | null; onClose
   );
 }
 
-function buildLatestHomeConfirmationTargets(runs: SendRunView[]): HomeConfirmationTarget[] {
-  const targetsByUserId = new Map<string, HomeConfirmationTarget>();
-
-  for (const run of runs) {
-    for (const target of run.targets) {
-      if (target.status !== "success" || !target.userId || targetsByUserId.has(target.userId)) {
-        continue;
-      }
-
-      const confirmationStatus = target.confirmationStatus ?? "not_required";
-
-      if (confirmationStatus === "not_required") {
-        continue;
-      }
-
-      targetsByUserId.set(target.userId, {
-        confirmationStatus,
-        reminderSentAt: target.reminderSentAt ?? null,
-        runId: run.runId,
-        sentAt: run.sentAt,
-        userId: target.userId,
-        userName: target.userName,
-      });
-    }
-  }
-
-  return Array.from(targetsByUserId.values()).sort(
-    (left, right) =>
-      right.sentAt.localeCompare(left.sentAt) ||
-      left.userName.localeCompare(right.userName, "ja") ||
-      left.userId.localeCompare(right.userId),
-  );
-}
-
 function isHomeUnconfirmedTarget(target: HomeConfirmationTarget) {
   return target.confirmationStatus === "pending" || target.confirmationStatus === "reminded";
+}
+
+function compareHomeConfirmationTargets(left: HomeConfirmationTarget, right: HomeConfirmationTarget) {
+  return (
+    right.sentAt.localeCompare(left.sentAt) ||
+    left.userName.localeCompare(right.userName, "ja") ||
+    left.userId.localeCompare(right.userId)
+  );
 }
 
 function formatHomeTargetNames(targets: HomeConfirmationTarget[]) {

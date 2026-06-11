@@ -3,6 +3,12 @@ import { randomHex, stableHash } from "@/lib/server/crypto";
 import { getAdminDb } from "@/lib/server/firebase";
 import { toIsoString, toTimestamp } from "@/lib/server/firestoreUtils";
 import type { CronRunView, MessageView, SourceType, UserInfoView } from "../types";
+import {
+  DEFAULT_HISTORY_PAGE_LIMIT,
+  encodeHistoryCursor,
+  normalizeHistoryPageLimit,
+  parseHistoryCursor,
+} from "./historyPagination";
 
 const PROTECTED_RECENT_COUNT = 1000;
 const MAX_DAILY_DELETE_COUNT = 10000;
@@ -29,6 +35,11 @@ type MessageRecord = MessageView & {
   receivedAt: string;
   sourceUserId: null | string;
   webhookEventId: string;
+};
+
+type ListVisibleMessagesPageInput = {
+  cursor?: null | string;
+  limit?: number;
 };
 
 export async function saveTextMessage(input: SaveTextMessageInput) {
@@ -114,6 +125,28 @@ export async function listVisibleMessages(lineAccountId: string, limit = 100) {
     .map((doc) => toMessageRecord(doc.id, doc.data()))
     .sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.messageId.localeCompare(left.messageId))
     .map(toMessageView);
+}
+
+export async function listVisibleMessagesPage(
+  lineAccountId: string,
+  { cursor = null, limit = DEFAULT_HISTORY_PAGE_LIMIT }: ListVisibleMessagesPageInput = {},
+) {
+  const normalizedLimit = normalizeHistoryPageLimit(limit);
+  const recentSnapshot = await getRecentMessagesSnapshot(
+    lineAccountId,
+    normalizedLimit + 1,
+    parseHistoryCursor(cursor),
+  );
+  const records = recentSnapshot.docs
+    .map((doc) => toMessageRecord(doc.id, doc.data()))
+    .sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.messageId.localeCompare(left.messageId));
+  const pageRecords = records.slice(0, normalizedLimit);
+  const lastRecord = pageRecords.at(-1);
+
+  return {
+    messages: pageRecords.map(toMessageView),
+    nextCursor: records.length > normalizedLimit && lastRecord ? encodeHistoryCursor(lastRecord.sentAt) : null,
+  };
 }
 
 export async function listUserInfos(lineAccountId: string, limit = 1000): Promise<UserInfoView[]> {
@@ -342,18 +375,26 @@ async function getRecentMessagesByReceivedAtSnapshot(lineAccountId: string, limi
   }
 }
 
-async function getRecentMessagesSnapshot(lineAccountId: string, limit: number) {
+async function getRecentMessagesSnapshot(lineAccountId: string, limit: number, cursor: null | Timestamp = null) {
   const db = getAdminDb();
 
   try {
-    return await db
+    let query: FirebaseFirestore.Query = db
       .collection("messages")
       .where("lineAccountId", "==", lineAccountId)
-      .orderBy("sentAt", "desc")
-      .limit(limit)
-      .get();
+      .orderBy("sentAt", "desc");
+
+    if (cursor) {
+      query = query.startAfter(cursor);
+    }
+
+    return await query.limit(limit).get();
   } catch (error) {
     if (!isMissingIndexError(error)) {
+      throw error;
+    }
+
+    if (cursor) {
       throw error;
     }
 

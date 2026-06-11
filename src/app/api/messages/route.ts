@@ -1,7 +1,11 @@
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireViewerSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
-import { listVisibleMessages } from "@/features/messages/server/messages";
+import {
+  InvalidHistoryCursorError,
+  DEFAULT_HISTORY_PAGE_LIMIT,
+} from "@/features/messages/server/historyPagination";
+import { listVisibleMessagesPage } from "@/features/messages/server/messages";
 
 export const runtime = "nodejs";
 
@@ -15,11 +19,16 @@ export async function GET(request: Request) {
 
   try {
     const url = new URL(request.url);
-    const limit = Number(url.searchParams.get("limit") ?? 100);
-    const messages = await listVisibleMessages(auth.payload.lineAccountId, limit);
+    const cursor = url.searchParams.get("cursor");
+    const limit = Number(url.searchParams.get("limit") ?? DEFAULT_HISTORY_PAGE_LIMIT);
+    const page = await listVisibleMessagesPage(auth.payload.lineAccountId, { cursor, limit });
 
-    return jsonData({ messages }, requestId);
+    return jsonData(page, requestId);
   } catch (error) {
+    if (error instanceof InvalidHistoryCursorError) {
+      return jsonError(400, "VALIDATION_ERROR", "履歴の続き取得情報が不正です。", requestId);
+    }
+
     console.error("[messages-list] failed", {
       message: error instanceof Error ? error.message : String(error),
       requestId,

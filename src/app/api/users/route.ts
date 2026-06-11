@@ -17,8 +17,12 @@ export async function GET(request: Request) {
   }
 
   try {
-    await backfillBroadcastUsersFromMessages(auth.payload.lineAccountId);
-    const users = await listBroadcastUsers(auth.payload.lineAccountId);
+    let users = await listBroadcastUsers(auth.payload.lineAccountId);
+
+    if (!users.length) {
+      await backfillBroadcastUsersFromMessages(auth.payload.lineAccountId);
+      users = await listBroadcastUsers(auth.payload.lineAccountId);
+    }
 
     return jsonData({ users }, requestId);
   } catch (error) {

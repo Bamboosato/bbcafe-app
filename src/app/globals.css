@@ -1,6 +1,6 @@
 :root {
   --background: #f6f8fb;
-  --border: #d7dde6;
+  --border: #c2ccd9;
   --danger: #c93535;
   --danger-strong: #a92323;
   --foreground: #1d2633;
@@ -250,6 +250,23 @@ label {
   border-radius: 8px;
   grid-area: list;
   overflow: hidden;
+}
+
+.history-load-more {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  padding: 2px 0 6px;
+}
+
+.history-load-more button {
+  min-width: 160px;
+}
+
+.history-load-more-sentinel {
+  height: 1px;
+  width: 100%;
 }
 
 .message-row {

@@ -15,6 +15,12 @@ import {
   prepareSendRunTargetsForConfirmation,
   registerLatestConfirmationTargets,
 } from "./confirmations";
+import {
+  DEFAULT_HISTORY_PAGE_LIMIT,
+  encodeHistoryCursor,
+  normalizeHistoryPageLimit,
+  parseHistoryCursor,
+} from "./historyPagination";
 import { listUserInfos } from "./messages";
 
 export const DAILY_BROADCAST_SETTINGS_ID = "dailyBroadcast";
@@ -65,6 +71,11 @@ type SaveSendRunInput = {
   startedAt?: Date;
   targets: SendRunTargetView[];
   trigger: SendRunView["trigger"];
+};
+
+type ListSendRunsPageInput = {
+  cursor?: null | string;
+  limit?: number;
 };
 
 export function createManualSendRunId(date = new Date()) {
@@ -214,6 +225,15 @@ export async function listSelectedBroadcastUsers(lineAccountId: string): Promise
   return snapshot.docs
     .map((doc) => toUserInfoView(lineAccountId, doc.id, doc.data()))
     .sort((left, right) => left.userName.localeCompare(right.userName, "ja") || left.userId.localeCompare(right.userId));
+}
+
+export async function countSelectedBroadcastUsers(lineAccountId: string) {
+  const snapshot = await usersCollection(lineAccountId)
+    .where("broadcastSelected", "==", true)
+    .count()
+    .get();
+
+  return snapshot.data().count;
 }
 
 export async function updateBroadcastUserSelection({
@@ -410,6 +430,34 @@ export async function listSendRuns(lineAccountId: string, limit = 100): Promise<
     .get();
 
   return snapshot.docs.map((doc) => toSendRunView(lineAccountId, doc.id, doc.data()));
+}
+
+export async function listSendRunsPage(
+  lineAccountId: string,
+  { cursor = null, limit = DEFAULT_HISTORY_PAGE_LIMIT }: ListSendRunsPageInput = {},
+) {
+  const normalizedLimit = normalizeHistoryPageLimit(limit);
+  let query: FirebaseFirestore.Query = sendRunsCollection(lineAccountId).orderBy("sentAt", "desc");
+  const parsedCursor = parseHistoryCursor(cursor);
+
+  if (parsedCursor) {
+    query = query.startAfter(parsedCursor);
+  }
+
+  const snapshot = await query
+    .limit(normalizedLimit + 1)
+    .select(...SEND_RUN_SUMMARY_FIELDS)
+    .get();
+  const runs = snapshot.docs
+    .map((doc) => toSendRunView(lineAccountId, doc.id, doc.data()))
+    .sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.runId.localeCompare(left.runId));
+  const pageRuns = runs.slice(0, normalizedLimit);
+  const lastRun = pageRuns.at(-1);
+
+  return {
+    nextCursor: runs.length > normalizedLimit && lastRun ? encodeHistoryCursor(lastRun.sentAt) : null,
+    runs: pageRuns,
+  };
 }
 
 export async function listAutoSendRuns(lineAccountId: string, limit = 20): Promise<SendRunView[]> {
