@@ -16,6 +16,7 @@ export const runtime = "nodejs";
 
 type SendRequestBody = {
   message?: unknown;
+  userIds?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -35,9 +36,14 @@ export async function POST(request: Request) {
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
+  const requestedUserIds = parseRequestedUserIds(body.userIds);
 
   if (!message) {
     return jsonError(400, "VALIDATION_ERROR", "送信するメッセージを入力してください。", requestId);
+  }
+
+  if (requestedUserIds === null) {
+    return jsonError(400, "VALIDATION_ERROR", "送信先ユーザが正しくありません。", requestId);
   }
 
   let selectedUsers: UserInfoView[] = [];
@@ -45,7 +51,17 @@ export async function POST(request: Request) {
   let sentAt: null | Date = null;
 
   try {
-    selectedUsers = await listSelectedBroadcastUsers(auth.payload.lineAccountId);
+    const broadcastUsers = await listSelectedBroadcastUsers(auth.payload.lineAccountId);
+
+    if (broadcastUsers.length === 0) {
+      return jsonError(400, "VALIDATION_ERROR", "送信先ユーザを選択してください。", requestId);
+    }
+
+    selectedUsers = resolveManualSendUsers(broadcastUsers, requestedUserIds);
+
+    if (requestedUserIds && selectedUsers.length !== requestedUserIds.length) {
+      return jsonError(400, "VALIDATION_ERROR", "送信先ユーザが正しくありません。", requestId);
+    }
 
     if (selectedUsers.length === 0) {
       return jsonError(400, "VALIDATION_ERROR", "送信先ユーザを選択してください。", requestId);
@@ -118,6 +134,28 @@ export async function POST(request: Request) {
 
     return jsonError(503, "SERVICE_UNAVAILABLE", "メッセージを送信できません。", requestId);
   }
+}
+
+export function parseRequestedUserIds(value: unknown) {
+  if (typeof value === "undefined") {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  return [...new Set(value.map((userId) => (typeof userId === "string" ? userId.trim() : "")).filter(Boolean))];
+}
+
+export function resolveManualSendUsers(users: UserInfoView[], requestedUserIds: string[] | undefined) {
+  if (!requestedUserIds) {
+    return users;
+  }
+
+  const usersById = new Map(users.map((user) => [user.userId, user]));
+
+  return requestedUserIds.map((userId) => usersById.get(userId)).filter((user): user is UserInfoView => Boolean(user));
 }
 
 function toSendRunTargets(

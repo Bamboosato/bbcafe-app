@@ -12,6 +12,27 @@ const TIME_OF_DAY_GREETINGS = ["お早うございます。", "こんにちは�
 const UNKNOWN_GENERATION_ERROR_SUMMARY = "メッセージ生成APIで不明なエラーが発生しました。";
 const HEATSTROKE_ALERT_INFO =
   "【熱中症警戒】非常に暑くなる季節です。必ずエアコン使用と水分補給を促してください。";
+const DAILY_GREETING_REGENERATION_MAX_ATTEMPTS = 0;
+const DAILY_GREETING_CONTENT_MAX_ATTEMPTS = 1 + DAILY_GREETING_REGENERATION_MAX_ATTEMPTS;
+const RECENT_OPENING_BANNED_KEYWORD_MAX_EXAMPLES = 20;
+const RECENT_OPENING_LOOKBACK_DAYS = 7;
+const RECENT_OPENING_MAX_EXAMPLES = 7;
+const RECENT_OPENING_SIMILARITY_THRESHOLD = 0.82;
+const OPENING_KEYWORD_STOP_WORDS = new Set([
+  "今日",
+  "本日",
+  "季節",
+  "時期",
+  "頃",
+  "名古屋",
+  "晴れ",
+  "雨",
+  "曇り",
+  "くもり",
+  "最高気温",
+  "予想",
+  "気温",
+]);
 
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
@@ -58,11 +79,15 @@ class GeminiMessageGenerationError extends Error {
 }
 
 export async function generateDailyGreetingMessage({
+  calendarEventInfo,
   location = process.env.MESSAGE_LOCATION?.trim() || DEFAULT_MESSAGE_LOCATION,
+  recentOpeningExamples = [],
   today = new Date(),
   weatherInfo,
 }: {
+  calendarEventInfo?: string;
   location?: string;
+  recentOpeningExamples?: string[];
   today?: Date;
   weatherInfo?: string;
 } = {}) {
@@ -78,7 +103,6 @@ export async function generateDailyGreetingMessage({
   const models = getGeminiModelCandidates();
   const timeOfDayGreeting = getTimeOfDayGreeting(today);
   const greetingContext = await buildDailyGreetingContext({ today, weatherInfo });
-  const prompt = buildDailyGreetingPrompt({ ...greetingContext, location, timeOfDayGreeting });
   const generateContentConfig: GenerateContentConfig = {
     maxOutputTokens: DAILY_GREETING_MAX_OUTPUT_TOKENS,
     temperature: 0.8,
@@ -86,56 +110,86 @@ export async function generateDailyGreetingMessage({
       thinkingBudget: 0,
     },
   };
-  const payload = await generateGeminiContent({
-    apiKey,
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [{ text: prompt }],
-          role: "user",
-        },
-      ],
-      generationConfig: generateContentConfig,
-    }),
-    maxRetriesPerModel: getGeminiMaxRetriesPerModel(),
-    models,
-    retryDelayMs: getGeminiRetryDelayMs(),
-  });
+  const contentMaxAttempts = recentOpeningExamples.length > 0 ? DAILY_GREETING_CONTENT_MAX_ATTEMPTS : 1;
+  let recentOpeningKeywords = buildRecentGreetingOpeningKeywords(recentOpeningExamples);
+  let lastRepeatedText: string | undefined;
 
-  const candidate = payload.candidates?.[0];
-  const finishReason = candidate?.finishReason;
-  const generatedText = candidate?.content?.parts
-    ?.map((part) => part.text ?? "")
-    .join("")
-    .trim();
+  for (let contentAttempt = 0; contentAttempt < contentMaxAttempts; contentAttempt += 1) {
+    const prompt = buildDailyGreetingPrompt({
+      ...greetingContext,
+      calendarEventInfo,
+      location,
+      recentOpeningKeywords,
+      timeOfDayGreeting,
+    });
+    const payload = await generateGeminiContent({
+      apiKey,
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [{ text: prompt }],
+            role: "user",
+          },
+        ],
+        generationConfig: generateContentConfig,
+      }),
+      maxRetriesPerModel: getGeminiMaxRetriesPerModel(),
+      models,
+      retryDelayMs: getGeminiRetryDelayMs(),
+    });
 
-  if (!generatedText) {
-    throw new GeminiMessageGenerationError(
-      "Gemini API did not return message text.",
-      "Gemini APIからメッセージ本文が返されませんでした。",
-    );
-  }
+    const candidate = payload.candidates?.[0];
+    const finishReason = candidate?.finishReason;
+    const generatedText = candidate?.content?.parts
+      ?.map((part) => part.text ?? "")
+      .join("")
+      .trim();
 
-  const text = formatDailyGreetingForSend(generatedText, today);
+    if (!generatedText) {
+      throw new GeminiMessageGenerationError(
+        "Gemini API did not return message text.",
+        "Gemini APIからメッセージ本文が返されませんでした。",
+      );
+    }
 
-  if (finishReason && finishReason !== "STOP" && finishReason !== "MAX_TOKENS") {
-    throw new GeminiMessageGenerationError(
-      `Gemini API stopped before completing the message: ${finishReason}.`,
-      `Gemini APIが途中で停止しました: ${finishReason}`,
-    );
-  }
+    const text = formatDailyGreetingForSend(generatedText, today);
 
-  if (looksIncompleteDailyGreeting(text)) {
-    throw new GeminiMessageGenerationError(
-      "Gemini API returned an incomplete message.",
-      "Gemini APIから不完全なメッセージが返されました。",
-      { location, text },
-    );
+    if (finishReason && finishReason !== "STOP" && finishReason !== "MAX_TOKENS") {
+      throw new GeminiMessageGenerationError(
+        `Gemini API stopped before completing the message: ${finishReason}.`,
+        `Gemini APIが途中で停止しました: ${finishReason}`,
+      );
+    }
+
+    if (looksIncompleteDailyGreeting(text)) {
+      throw new GeminiMessageGenerationError(
+        "Gemini API returned an incomplete message.",
+        "Gemini APIから不完全なメッセージが返されました。",
+        { location, text },
+      );
+    }
+
+    const conflict = findRecentGreetingConflict(text, recentOpeningExamples, recentOpeningKeywords);
+
+    if (!conflict) {
+      return {
+        location,
+        text,
+      };
+    }
+
+    recentOpeningKeywords = [
+      ...new Set([
+        ...recentOpeningKeywords,
+        ...extractOpeningKeywords(text),
+      ]),
+    ].slice(0, RECENT_OPENING_BANNED_KEYWORD_MAX_EXAMPLES);
+    lastRepeatedText = text;
   }
 
   return {
     location,
-    text,
+    text: lastRepeatedText ?? "",
   };
 }
 
@@ -212,34 +266,259 @@ export function summarizeDailyGreetingGenerationError(error: unknown) {
   return UNKNOWN_GENERATION_ERROR_SUMMARY;
 }
 
+export function buildRecentGreetingOpeningExamples(
+  runs: Array<{ messageText: string; sentAt: string }>,
+  today = new Date(),
+) {
+  const cutoffTime = today.getTime() - RECENT_OPENING_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  const seen = new Set<string>();
+  const examples: string[] = [];
+
+  for (const run of runs) {
+    const sentAt = Date.parse(run.sentAt);
+
+    if (Number.isNaN(sentAt) || sentAt < cutoffTime || sentAt > today.getTime()) {
+      continue;
+    }
+
+    const opening = extractGreetingOpeningExpression(run.messageText);
+
+    if (!opening || seen.has(opening)) {
+      continue;
+    }
+
+    seen.add(opening);
+    examples.push(opening);
+
+    if (examples.length >= RECENT_OPENING_MAX_EXAMPLES) {
+      break;
+    }
+  }
+
+  return examples;
+}
+
+export function buildRecentGreetingOpeningKeywords(openings: string[]) {
+  const seen = new Set<string>();
+  const keywords: string[] = [];
+
+  for (const opening of openings) {
+    for (const keyword of extractOpeningKeywords(opening)) {
+      if (seen.has(keyword)) {
+        continue;
+      }
+
+      seen.add(keyword);
+      keywords.push(keyword);
+
+      if (keywords.length >= RECENT_OPENING_BANNED_KEYWORD_MAX_EXAMPLES) {
+        return keywords;
+      }
+    }
+  }
+
+  return keywords;
+}
+
+function extractGreetingOpeningExpression(text: string) {
+  const normalizedText = text.replace(/\s+/g, " ").trim();
+  const greetingPattern = new RegExp(`^(${TIME_OF_DAY_GREETINGS.map(escapeRegExp).join("|")})\\s*`);
+  const withoutGreeting = normalizedText.replace(greetingPattern, "").trim();
+
+  if (withoutGreeting.length < 8) {
+    return "";
+  }
+
+  const sentenceMatch = withoutGreeting.match(/^(.{1,100}?[。.!?！？])/u);
+
+  return (sentenceMatch?.[1] ?? withoutGreeting.slice(0, 80)).trim();
+}
+
+function findRecentGreetingConflict(text: string, recentOpeningExamples: string[], recentOpeningKeywords: string[]) {
+  const opening = extractGreetingOpeningExpression(text);
+
+  if (!opening) {
+    return null;
+  }
+
+  const similarOpening = recentOpeningExamples.find((example) => areGreetingOpeningsSimilar(opening, example));
+  const repeatedKeywords = findRepeatedOpeningKeywords(opening, recentOpeningKeywords);
+
+  if (!similarOpening && repeatedKeywords.length === 0) {
+    return null;
+  }
+
+  return { opening: similarOpening ?? "", repeatedKeywords };
+}
+
+function areGreetingOpeningsSimilar(left: string, right: string) {
+  const normalizedLeft = normalizeGreetingOpeningForComparison(left);
+  const normalizedRight = normalizeGreetingOpeningForComparison(right);
+
+  if (normalizedLeft.length < 8 || normalizedRight.length < 8) {
+    return false;
+  }
+
+  if (normalizedLeft === normalizedRight) {
+    return true;
+  }
+
+  if (normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)) {
+    return true;
+  }
+
+  return calculateBigramDiceSimilarity(normalizedLeft, normalizedRight) >= RECENT_OPENING_SIMILARITY_THRESHOLD;
+}
+
+function normalizeGreetingOpeningForComparison(value: string) {
+  const opening = extractGreetingOpeningExpression(value) || value;
+
+  return opening
+    .replace(/^(今日は|本日は)?\s*\d{1,2}月\d{1,2}日[、,\s]*/u, "")
+    .replace(/^(今日は|本日は)[、,\s]*/u, "")
+    .replace(/[「」『』"“”'’\s。、,.，!！?？]/gu, "")
+    .trim();
+}
+
+function extractOpeningKeywords(text: string) {
+  const opening = extractGreetingOpeningExpression(text) || text;
+  const seasonalClause = normalizeOpeningSeasonalClause(opening);
+  const seen = new Set<string>();
+  const keywords: string[] = [];
+  const nounCandidates = seasonalClause.match(/[一-龯々〆ヵヶ]{2,8}(?:[ぁ-ん]{1,3})?|[ァ-ヴー]{3,12}/gu) ?? [];
+
+  for (const candidate of nounCandidates) {
+    addOpeningKeyword(candidate, seen, keywords);
+  }
+
+  return keywords;
+}
+
+function normalizeOpeningSeasonalClause(opening: string) {
+  return opening
+    .replace(/^(今日は|本日は)?\s*\d{1,2}月\d{1,2}日[、,\s]*/u, "")
+    .replace(/^(今日は|本日は)[、,\s]*/u, "")
+    .replace(/名古屋.*$/u, "")
+    .replace(/[「」『』"“”'’]/gu, "")
+    .trim();
+}
+
+function addOpeningKeyword(keyword: string, seen: Set<string>, keywords: string[]) {
+  const normalizedKeyword = normalizeOpeningKeyword(keyword);
+
+  if (
+    normalizedKeyword.length < 2 ||
+    OPENING_KEYWORD_STOP_WORDS.has(normalizedKeyword) ||
+    seen.has(normalizedKeyword)
+  ) {
+    return;
+  }
+
+  seen.add(normalizedKeyword);
+  keywords.push(normalizedKeyword);
+}
+
+function normalizeOpeningKeyword(keyword: string) {
+  return keyword
+    .trim()
+    .replace(/(です|ですね|ます|ました|でしょう|頃|ごろ)$/u, "")
+    .replace(/[はがをにへとでのもや、。,.，!！?？]+$/u, "")
+    .trim();
+}
+
+function findRepeatedOpeningKeywords(opening: string, recentOpeningKeywords: string[]) {
+  const seasonalClause = normalizeOpeningSeasonalClause(opening);
+
+  return recentOpeningKeywords.filter((keyword) => seasonalClause.includes(keyword));
+}
+
+function calculateBigramDiceSimilarity(left: string, right: string) {
+  const leftBigrams = toBigramCounts(left);
+  const rightBigrams = toBigramCounts(right);
+  let overlap = 0;
+  let leftTotal = 0;
+  let rightTotal = 0;
+
+  for (const count of leftBigrams.values()) {
+    leftTotal += count;
+  }
+
+  for (const [bigram, rightCount] of rightBigrams) {
+    const leftCount = leftBigrams.get(bigram) ?? 0;
+
+    rightTotal += rightCount;
+    overlap += Math.min(leftCount, rightCount);
+  }
+
+  if (leftTotal === 0 || rightTotal === 0) {
+    return 0;
+  }
+
+  return (2 * overlap) / (leftTotal + rightTotal);
+}
+
+function toBigramCounts(value: string) {
+  const counts = new Map<string, number>();
+
+  for (let index = 0; index < value.length - 1; index += 1) {
+    const bigram = value.slice(index, index + 2);
+
+    counts.set(bigram, (counts.get(bigram) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
 function buildDailyGreetingPrompt({
+  calendarEventInfo,
   dateInfo,
   location,
+  recentOpeningKeywords,
   timeOfDayGreeting,
   weatherInfo,
 }: {
+  calendarEventInfo?: string;
   dateInfo: string;
   location: string;
+  recentOpeningKeywords: string[];
   timeOfDayGreeting: string;
   weatherInfo: string;
 }) {
+  const normalizedCalendarEventInfo = calendarEventInfo?.trim();
+  const calendarEventInfoLine = normalizedCalendarEventInfo
+    ? `・今日の大切な予定: ${normalizedCalendarEventInfo}\n`
+    : "";
+  const characterCountRule = normalizedCalendarEventInfo ? "80文字〜130文字" : "60文字〜95文字";
+  const recentOpeningKeywordsText = recentOpeningKeywords.map((keyword) => `・${keyword}`).join("\n");
+  const recentOpeningKeywordsSection = recentOpeningKeywordsText
+    ? `\n【最近使った禁止キーワード】\n${recentOpeningKeywordsText}\n`
+    : "";
+
   return `
 あなたは、${location}にお住まいの高齢者の方に毎日寄り添う、親切で優しいケアマネージャーです。
 以下の【今日の情報】を自然に盛り込んで、LINEで送る短い挨拶文を1つだけ作成してください。
 
 【今日の情報】
 ・日付: ${dateInfo}
-・天気予報: ${weatherInfo}
+${calendarEventInfoLine}・天気予報: ${weatherInfo}
+${recentOpeningKeywordsSection}
 
 【お年寄り向けの絶対ルール】
 1. 本文の冒頭は必ず「${timeOfDayGreeting}」にしてください。
-2. 冒頭の挨拶の直後に、指定された日付の時期にぴったりな日本の暦や季節の言葉を1つ、わかりやすく含めてください。
-   例: 二十四節気、衣替え、梅雨入り、新緑、秋の気配、年の瀬、花の季節など。
-3. お年寄りが「ああ、もうそんな季節か」と感じられる、雑学的でやさしい表現にしてください。
-4. 文字数は「60文字〜95文字」の範囲内に収めてください。
-5. 漢字を多くせず、ひらがなを多めにして、専門用語は使わないでください。
-6. 天気予報や注意情報に基づき、具体的な行動アドバイスを必ず最後に入れてください。
-7. 解説や前置きは不要です。LINEの本文のみを出力してください。
+2. 冒頭の挨拶の直後に、必ず「今日は${dateInfo}、」を入れてください。
+3. 「今日は${dateInfo}、」に続けて、指定された日付の時期に合う季節の言葉を1つだけ、わかりやすく含めてください。
+4. 上の【最近使った禁止キーワード】に列挙された語は、冒頭の季節の一言には使わないでください。ただし、誕生花の定型文や天気予報の説明に必要な場合は使ってかまいません。
+5. 今日の大切な予定がある場合は、誕生花、花言葉、天気、季節の話題よりも優先して本文の中心にしてください。
+6. 今日の大切な予定は、自然な日本語に整えてください。人名と思われる名前には「さん」を付けてください。
+   例: 「千夏子の誕生日」→「今日は千夏子さんのお誕生日ですね。」
+   例: 「岳夫と由美子の結婚記念日」→「今日は岳夫さんと由美子さんの結婚記念日ですね。」
+7. 指定された日付の「今日の誕生花」を、日本人に馴染みの深い代表的な花から1つだけ選び、その花の花言葉を1つだけ添えてください。
+8. 誕生花は必ず「今日の誕生花は○○○、花言葉は△△△△△です。」という形で本文に入れてください。
+9. お年寄りが「ああ、もうそんな季節か」と感じられる、雑学的でやさしい表現にしてください。
+10. 文字数は「${characterCountRule}」の範囲内に収めてください。
+11. 漢字を多くせず、ひらがなを多めにして、専門用語は使わないでください。
+12. 天気予報や注意情報に基づき、具体的な行動アドバイスを必ず最後に入れてください。
+13. 解説や前置きは不要です。LINEの本文のみを出力してください。
 `.trim();
 }
 
@@ -284,7 +563,23 @@ export function formatDailyGreetingForSend(text: string, sendTime = new Date()) 
     return timeOfDayGreeting;
   }
 
-  return `${timeOfDayGreeting}\n${textWithoutExistingGreeting}`;
+  return `${timeOfDayGreeting}\n${ensureDateInGreetingText(textWithoutExistingGreeting, sendTime)}`;
+}
+
+function ensureDateInGreetingText(text: string, sendTime: Date) {
+  const dateInfo = formatMonthDayInJapan(sendTime);
+
+  if (text.includes(dateInfo)) {
+    return text;
+  }
+
+  const todayPrefixMatch = text.match(/^(今日は|本日は)\s*[、,\s]*/u);
+
+  if (todayPrefixMatch) {
+    return `今日は${dateInfo}、${text.slice(todayPrefixMatch[0].length).trimStart()}`;
+  }
+
+  return `今日は${dateInfo}、${text}`;
 }
 
 function getTimeOfDayGreeting(date: Date) {
@@ -352,6 +647,10 @@ function parseCommaSeparatedEnv(value: string | undefined) {
     .split(",")
     .map((model) => model.trim())
     .filter(Boolean);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function resolveRetryDelayMs(retryAfter: null | string, retryDelayMs: number, attempt: number) {

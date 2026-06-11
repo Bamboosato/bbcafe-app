@@ -23,6 +23,7 @@ import {
 import { getClientAuth } from "@/lib/firebaseClient";
 import type {
   AutomationSettingsView,
+  CalendarEventView,
   CommonSettingsView,
   CronHistoryItemView,
   MessageView,
@@ -30,7 +31,7 @@ import type {
   UserInfoView,
 } from "@/features/messages/types";
 
-type ViewerView = "cron-runs" | "generated-message" | "messages" | "sent" | "settings" | "users";
+type ViewerView = "calendar" | "cron-runs" | "generated-message" | "messages" | "sent" | "settings" | "users";
 
 type ApiEnvelope<T> = {
   data?: T;
@@ -56,6 +57,21 @@ type UsersResponse = {
 
 type UserResponse = {
   user: UserInfoView;
+};
+
+type CalendarEventsResponse = {
+  events: CalendarEventView[];
+  todayEvents: CalendarEventView[];
+};
+
+type CalendarEventResponse = {
+  event: CalendarEventView;
+};
+
+type CalendarEventDraft = {
+  enabled: boolean;
+  eventText: string;
+  monthDay: string;
 };
 
 type MessageResponse = {
@@ -120,6 +136,8 @@ export default function ViewerApp({
   const [messages, setMessages] = useState<MessageView[]>([]);
   const [sentRuns, setSentRuns] = useState<SendRunView[]>([]);
   const [users, setUsers] = useState<UserInfoView[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEventView[]>([]);
+  const [todayCalendarEvents, setTodayCalendarEvents] = useState<CalendarEventView[]>([]);
   const [commonSettings, setCommonSettings] = useState<CommonSettingsView | null>(null);
   const [commonSettingsChannelAccessToken, setCommonSettingsChannelAccessToken] = useState("");
   const [commonSettingsChannelSecret, setCommonSettingsChannelSecret] = useState("");
@@ -128,6 +146,7 @@ export default function ViewerApp({
   const [sendRunFilter, setSendRunFilter] = useState<SendRunFilter>("all");
   const [selectedMessage, setSelectedMessage] = useState<MessageView | null>(null);
   const [selectedSendRun, setSelectedSendRun] = useState<SendRunView | null>(null);
+  const [manualSendUserIds, setManualSendUserIds] = useState<string[]>([]);
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [generatedMessageLocation, setGeneratedMessageLocation] = useState("");
   const [generatedMessageStatus, setGeneratedMessageStatus] = useState("");
@@ -145,6 +164,7 @@ export default function ViewerApp({
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [loadingSentRuns, setLoadingSentRuns] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingCalendarEvents, setLoadingCalendarEvents] = useState(false);
   const [loadingCommonSettings, setLoadingCommonSettings] = useState(false);
   const [loadingCronHistory, setLoadingCronHistory] = useState(false);
   const [savingCommonSettings, setSavingCommonSettings] = useState(false);
@@ -158,8 +178,10 @@ export default function ViewerApp({
   const loadingMessagesRef = useRef(false);
   const loadingSentRunsRef = useRef(false);
   const loadingUsersRef = useRef(false);
+  const loadingCalendarEventsRef = useRef(false);
   const loadingCommonSettingsRef = useRef(false);
   const loadingCronHistoryRef = useRef(false);
+  const selectableManualSendUserIdsRef = useRef<string[]>([]);
 
   const selectedId = selectedMessage?.messageId ?? null;
   const filteredMessages = useMemo(() => filterMessages(messages, messageFilter), [messages, messageFilter]);
@@ -169,6 +191,11 @@ export default function ViewerApp({
     [users],
   );
   const selectedUserIds = useMemo(() => selectedUsers.map((user) => user.userId), [selectedUsers]);
+  const manualSendUsers = useMemo(() => {
+    const manualSendUserIdSet = new Set(manualSendUserIds);
+
+    return selectedUsers.filter((user) => manualSendUserIdSet.has(user.userId));
+  }, [manualSendUserIds, selectedUsers]);
   const currentView = initialView;
   const viewItems = VIEW_ITEMS;
   const messageListStatus = loadingMessages ? "更新中です。" : status || "更新ボタンで最新の受信履歴を取得します。";
@@ -239,6 +266,34 @@ export default function ViewerApp({
     } finally {
       loadingUsersRef.current = false;
       setLoadingUsers(false);
+    }
+  }, []);
+
+  const loadCalendarEvents = useCallback(async () => {
+    if (loadingCalendarEventsRef.current) {
+      return;
+    }
+
+    loadingCalendarEventsRef.current = true;
+    setLoadingCalendarEvents(true);
+    setError("");
+
+    try {
+      const result = await fetchJson<CalendarEventsResponse>("/api/calendar-events", {
+        cache: "no-store",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      setCalendarEvents(result.data?.events ?? []);
+      setTodayCalendarEvents(result.data?.todayEvents ?? []);
+      setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
+    } finally {
+      loadingCalendarEventsRef.current = false;
+      setLoadingCalendarEvents(false);
     }
   }, []);
 
@@ -456,6 +511,7 @@ export default function ViewerApp({
           void loadUsers();
         }
         void loadAutomationSettings();
+        void loadCalendarEvents();
       }
 
       if (currentView === "sent") {
@@ -469,6 +525,10 @@ export default function ViewerApp({
       if (currentView === "cron-runs") {
         void loadCronHistory();
       }
+
+      if (currentView === "calendar") {
+        void loadCalendarEvents();
+      }
     }, 0);
 
     return () => window.clearTimeout(timer);
@@ -476,6 +536,7 @@ export default function ViewerApp({
     authenticated,
     currentView,
     loadAutomationSettings,
+    loadCalendarEvents,
     loadCommonSettings,
     loadCronHistory,
     loadMessages,
@@ -487,6 +548,20 @@ export default function ViewerApp({
   useEffect(() => {
     authenticatedRef.current = authenticated;
   }, [authenticated]);
+
+  useEffect(() => {
+    const previousSelectableIds = selectableManualSendUserIdsRef.current;
+    const previousSelectableIdSet = new Set(previousSelectableIds);
+    const nextSelectableIdSet = new Set(selectedUserIds);
+
+    setManualSendUserIds((current) => {
+      const retainedIds = current.filter((userId) => nextSelectableIdSet.has(userId));
+      const addedIds = selectedUserIds.filter((userId) => !previousSelectableIdSet.has(userId));
+
+      return [...retainedIds, ...addedIds];
+    });
+    selectableManualSendUserIdsRef.current = selectedUserIds;
+  }, [selectedUserIds]);
 
   useEffect(() => {
     function handleVisibilityChange() {
@@ -788,6 +863,10 @@ export default function ViewerApp({
     setMessages([]);
     setSentRuns([]);
     setUsers([]);
+    setManualSendUserIds([]);
+    selectableManualSendUserIdsRef.current = [];
+    setCalendarEvents([]);
+    setTodayCalendarEvents([]);
     setCommonSettings(null);
     setCommonSettingsChannelAccessToken("");
     setCommonSettingsChannelSecret("");
@@ -838,6 +917,78 @@ export default function ViewerApp({
     );
   }
 
+  function handleManualSendUserSelectionChange(userId: string, selected: boolean) {
+    setManualSendUserIds((current) => {
+      if (selected) {
+        return current.includes(userId) ? current : [...current, userId];
+      }
+
+      return current.filter((currentUserId) => currentUserId !== userId);
+    });
+  }
+
+  async function handleCreateCalendarEvent(input: CalendarEventDraft) {
+    setError("");
+
+    const result = await fetchJson<CalendarEventResponse>("/api/calendar-events", {
+      body: JSON.stringify(input),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+
+    if (result.error || !result.data?.event) {
+      throw new Error(result.error?.message ?? "カレンダー情報を保存できません。");
+    }
+
+    applyCalendarEvents([result.data.event, ...calendarEvents]);
+    setStatus("カレンダー情報を追加しました。");
+  }
+
+  async function handleUpdateCalendarEvent(eventId: string, input: CalendarEventDraft) {
+    setError("");
+
+    const result = await fetchJson<CalendarEventResponse>(`/api/calendar-events/${encodeURIComponent(eventId)}`, {
+      body: JSON.stringify(input),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "PATCH",
+    });
+
+    if (result.error || !result.data?.event) {
+      throw new Error(result.error?.message ?? "カレンダー情報を更新できません。");
+    }
+
+    applyCalendarEvents(
+      calendarEvents.map((event) => (event.eventId === eventId ? result.data?.event ?? event : event)),
+    );
+    setStatus("カレンダー情報を更新しました。");
+  }
+
+  async function handleDeleteCalendarEvent(eventId: string) {
+    setError("");
+
+    const result = await fetchJson<{ deleted: boolean }>(`/api/calendar-events/${encodeURIComponent(eventId)}`, {
+      method: "DELETE",
+    });
+
+    if (result.error || !result.data?.deleted) {
+      throw new Error(result.error?.message ?? "カレンダー情報を削除できません。");
+    }
+
+    applyCalendarEvents(calendarEvents.filter((event) => event.eventId !== eventId));
+    setStatus("カレンダー情報を削除しました。");
+  }
+
+  function applyCalendarEvents(events: CalendarEventView[]) {
+    const sortedEvents = sortCalendarEventsForDisplay(events);
+
+    setCalendarEvents(sortedEvents);
+    setTodayCalendarEvents(getTodayCalendarEventsForDisplay(sortedEvents));
+  }
+
   async function handleGenerateMessage() {
     setError("");
     setGeneratedMessageStatus("");
@@ -870,6 +1021,7 @@ export default function ViewerApp({
       const result = await fetchJson<SendGeneratedMessageResponse>("/api/message-assistant/send", {
         body: JSON.stringify({
           message: generatedMessage,
+          userIds: manualSendUserIds,
         }),
         headers: {
           "Content-Type": "application/json",
@@ -1087,6 +1239,7 @@ export default function ViewerApp({
           <p>LINE公式アカウントのメッセージ履歴と配信管理</p>
         </div>
         <div className="admin-actions">
+          {accountEmail ? <span className="account-email-label">{formatAccountEmailLocalPart(accountEmail)}</span> : null}
           <div className="account-menu" ref={accountMenuRef}>
             <button
               aria-expanded={accountMenuOpen}
@@ -1191,6 +1344,19 @@ export default function ViewerApp({
         />
       ) : null}
 
+      {currentView === "calendar" ? (
+        <CalendarEventsScreen
+          events={calendarEvents}
+          loading={loadingCalendarEvents}
+          onCreate={(input) => handleCreateCalendarEvent(input)}
+          onDelete={(eventId) => handleDeleteCalendarEvent(eventId)}
+          onRefresh={() => void loadCalendarEvents()}
+          onUpdate={(eventId, input) => handleUpdateCalendarEvent(eventId, input)}
+          statusText={status || "登録済みのカレンダー情報を表示します。"}
+          todayEvents={todayCalendarEvents}
+        />
+      ) : null}
+
       {currentView === "sent" ? (
         <SentHistoryScreen
           filter={sendRunFilter}
@@ -1213,9 +1379,12 @@ export default function ViewerApp({
           location={generatedMessageLocation}
           onAutomationEnabledChange={(enabled) => void handleAutomationEnabledChange(enabled)}
           onGenerate={() => void handleGenerateMessage()}
+          onManualSendUserSelectionChange={handleManualSendUserSelectionChange}
           onMessageChange={setGeneratedMessage}
           onOpenUsers={showUserInfoView}
           onSend={() => void handleSendGeneratedMessage()}
+          manualSendUserIds={manualSendUserIds}
+          manualSendUsers={manualSendUsers}
           selectedUsers={selectedUsers}
           savingAutomationSettings={savingAutomationSettings}
           sending={sendingGeneratedMessage}
@@ -1253,10 +1422,11 @@ export default function ViewerApp({
 const VIEW_ITEMS: Array<{ label: string; view: ViewerView }> = [
   { label: "受信履歴", view: "messages" },
   { label: "送信履歴", view: "sent" },
+  { label: "Cron履歴", view: "cron-runs" },
   { label: "ユーザ情報", view: "users" },
   { label: "メッセージ送信", view: "generated-message" },
+  { label: "カレンダー情報", view: "calendar" },
   { label: "管理画面", view: "settings" },
-  { label: "Cron履歴", view: "cron-runs" },
 ];
 
 function AppTabs({
@@ -1330,6 +1500,10 @@ function routeForView(view: ViewerView) {
     return "/send";
   }
 
+  if (view === "calendar") {
+    return "/calendar";
+  }
+
   return "/";
 }
 
@@ -1364,6 +1538,7 @@ function CommonSettingsScreen({
       <div className="settings-header">
         <div>
           <h2>管理画面</h2>
+          <p className="status-text">LINE連携情報と履歴保存期間を管理します。</p>
         </div>
         {settings ? (
           <div className="settings-actions">
@@ -1525,6 +1700,7 @@ function UserInfoScreen({
       <div className="user-info-header">
         <div>
           <h2>ユーザ情報</h2>
+          <p className="status-text">自動送信と手動送信の送信対象を管理します。</p>
         </div>
         <div className="user-info-actions">
           <p className="status-text">{loading ? "ユーザ情報を更新中です。" : statusText}</p>
@@ -1572,6 +1748,297 @@ function UserInfoScreen({
         </div>
       )}
     </section>
+  );
+}
+
+function CalendarEventsScreen({
+  events,
+  loading,
+  onCreate,
+  onDelete,
+  onRefresh,
+  onUpdate,
+  statusText,
+  todayEvents,
+}: {
+  events: CalendarEventView[];
+  loading: boolean;
+  onCreate: (input: CalendarEventDraft) => Promise<void>;
+  onDelete: (eventId: string) => Promise<void>;
+  onRefresh: () => void;
+  onUpdate: (eventId: string, input: CalendarEventDraft) => Promise<void>;
+  statusText: string;
+  todayEvents: CalendarEventView[];
+}) {
+  const [draft, setDraft] = useState<CalendarEventDraft | null>(null);
+  const [editingId, setEditingId] = useState<null | string>(null);
+  const [editDraft, setEditDraft] = useState<CalendarEventDraft | null>(null);
+  const [rowError, setRowError] = useState("");
+  const [savingId, setSavingId] = useState<null | string>(null);
+  const todayText = formatCalendarEventsText(todayEvents);
+
+  function startEdit(event: CalendarEventView) {
+    setDraft(null);
+    setRowError("");
+    setEditingId(event.eventId);
+    setEditDraft(toCalendarEventDraft(event));
+  }
+
+  async function handleCreateSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!draft) {
+      return;
+    }
+
+    setSavingId("new");
+    setRowError("");
+
+    try {
+      await onCreate(draft);
+      setDraft(null);
+    } catch (error) {
+      setRowError(error instanceof Error ? error.message : "カレンダー情報を保存できません。");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function handleUpdateSubmit(event: React.FormEvent<HTMLFormElement>, eventId: string) {
+    event.preventDefault();
+
+    if (!editDraft) {
+      return;
+    }
+
+    setSavingId(eventId);
+    setRowError("");
+
+    try {
+      await onUpdate(eventId, editDraft);
+      setEditingId(null);
+      setEditDraft(null);
+    } catch (error) {
+      setRowError(error instanceof Error ? error.message : "カレンダー情報を更新できません。");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function handleDelete(eventId: string) {
+    if (!window.confirm("このカレンダー情報を削除しますか？")) {
+      return;
+    }
+
+    setSavingId(eventId);
+    setRowError("");
+
+    try {
+      await onDelete(eventId);
+      if (editingId === eventId) {
+        setEditingId(null);
+        setEditDraft(null);
+      }
+    } catch (error) {
+      setRowError(error instanceof Error ? error.message : "カレンダー情報を削除できません。");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <section className="calendar-events-screen">
+      <div className="calendar-events-header">
+        <div>
+          <h2>カレンダー情報</h2>
+          <p className="status-text">挨拶文に使う誕生日や記念日を、月日ごとに登録します。</p>
+        </div>
+        <div className="calendar-events-actions">
+          <p className="status-text">{loading ? "カレンダー情報を更新中です。" : statusText}</p>
+          <button onClick={onRefresh} type="button" disabled={loading}>
+            更新
+          </button>
+        </div>
+      </div>
+
+      <section className="calendar-today-panel">
+        <span>今日の予定</span>
+        <strong>{todayText || "ありません"}</strong>
+      </section>
+
+      {rowError ? <p className="error-text">{rowError}</p> : null}
+
+      {events.length || draft ? (
+        <div className="calendar-event-list" role="list">
+          <div aria-hidden="true" className="calendar-event-row calendar-event-list-header">
+            <span>月日</span>
+            <span>イベント</span>
+            <span>状態</span>
+            <span>操作</span>
+          </div>
+
+          {events.map((event) =>
+            editingId === event.eventId && editDraft ? (
+              <form
+                className="calendar-event-row calendar-event-edit-row"
+                key={event.eventId}
+                onSubmit={(submitEvent) => void handleUpdateSubmit(submitEvent, event.eventId)}
+                role="listitem"
+              >
+                <CalendarEventDraftFields
+                  draft={editDraft}
+                  disabled={Boolean(savingId)}
+                  inputIdPrefix={`calendar-event-${event.eventId}`}
+                  onChange={setEditDraft}
+                />
+                <div className="calendar-event-actions">
+                  <button disabled={Boolean(savingId)} type="submit">
+                    保存
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={Boolean(savingId)}
+                    onClick={() => {
+                      setEditingId(null);
+                      setEditDraft(null);
+                      setRowError("");
+                    }}
+                    type="button"
+                  >
+                    キャンセル
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <article className="calendar-event-row" key={event.eventId} role="listitem">
+                <span className="calendar-event-date">{formatCalendarMonthDayForDisplay(event.monthDay)}</span>
+                <span className="calendar-event-text">{event.eventText}</span>
+                <span className="calendar-event-state">{event.enabled ? "有効" : "無効"}</span>
+                <div className="calendar-event-actions">
+                  <button
+                    className="secondary"
+                    disabled={Boolean(savingId)}
+                    onClick={() => startEdit(event)}
+                    type="button"
+                  >
+                    編集
+                  </button>
+                  <button
+                    className="danger"
+                    disabled={Boolean(savingId)}
+                    onClick={() => void handleDelete(event.eventId)}
+                    type="button"
+                  >
+                    削除
+                  </button>
+                </div>
+              </article>
+            ),
+          )}
+
+          {draft ? (
+            <form
+              className="calendar-event-row calendar-event-edit-row"
+              onSubmit={(event) => void handleCreateSubmit(event)}
+              role="listitem"
+            >
+              <CalendarEventDraftFields
+                draft={draft}
+                disabled={Boolean(savingId)}
+                inputIdPrefix="calendar-event-new"
+                onChange={setDraft}
+              />
+              <div className="calendar-event-actions">
+                <button disabled={Boolean(savingId)} type="submit">
+                  保存
+                </button>
+                <button
+                  className="secondary"
+                  disabled={Boolean(savingId)}
+                  onClick={() => {
+                    setDraft(null);
+                    setRowError("");
+                  }}
+                  type="button"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </div>
+      ) : (
+        <div className="panel empty-message-panel">
+          {loading ? "カレンダー情報を読み込んでいます。" : "登録済みのカレンダー情報はありません。"}
+        </div>
+      )}
+
+      <button
+        aria-label="カレンダー情報を追加"
+        className="secondary calendar-add-button"
+        disabled={Boolean(draft) || Boolean(savingId)}
+        onClick={() => {
+          setEditingId(null);
+          setEditDraft(null);
+          setRowError("");
+          setDraft({ enabled: true, eventText: "", monthDay: "" });
+        }}
+        title="カレンダー情報を追加"
+        type="button"
+      >
+        ＋
+      </button>
+    </section>
+  );
+}
+
+function CalendarEventDraftFields({
+  disabled,
+  draft,
+  inputIdPrefix,
+  onChange,
+}: {
+  disabled: boolean;
+  draft: CalendarEventDraft;
+  inputIdPrefix: string;
+  onChange: (draft: CalendarEventDraft) => void;
+}) {
+  return (
+    <>
+      <label className="calendar-event-field calendar-event-month-day-field" htmlFor={`${inputIdPrefix}-month-day`}>
+        <span>月日</span>
+        <input
+          autoComplete="off"
+          disabled={disabled}
+          id={`${inputIdPrefix}-month-day`}
+          inputMode="numeric"
+          onChange={(event) => onChange({ ...draft, monthDay: event.target.value })}
+          placeholder="07/29"
+          value={draft.monthDay}
+        />
+      </label>
+      <label className="calendar-event-field" htmlFor={`${inputIdPrefix}-text`}>
+        <span>イベント</span>
+        <input
+          autoComplete="off"
+          disabled={disabled}
+          id={`${inputIdPrefix}-text`}
+          maxLength={40}
+          onChange={(event) => onChange({ ...draft, eventText: event.target.value })}
+          placeholder="○○○の誕生日"
+          value={draft.eventText}
+        />
+      </label>
+      <label className="calendar-event-enabled-field">
+        <input
+          checked={draft.enabled}
+          disabled={disabled}
+          onChange={(event) => onChange({ ...draft, enabled: event.target.checked })}
+          type="checkbox"
+        />
+        <span>有効</span>
+      </label>
+    </>
   );
 }
 
@@ -1649,9 +2116,12 @@ function GeneratedMessageScreen({
   generating,
   loadingUsers,
   location,
+  manualSendUserIds,
+  manualSendUsers,
   message,
   onAutomationEnabledChange,
   onGenerate,
+  onManualSendUserSelectionChange,
   onMessageChange,
   onOpenUsers,
   onSend,
@@ -1664,9 +2134,12 @@ function GeneratedMessageScreen({
   generating: boolean;
   loadingUsers: boolean;
   location: string;
+  manualSendUserIds: string[];
+  manualSendUsers: UserInfoView[];
   message: string;
   onAutomationEnabledChange: (enabled: boolean) => void;
   onGenerate: () => void;
+  onManualSendUserSelectionChange: (userId: string, selected: boolean) => void;
   onMessageChange: (message: string) => void;
   onOpenUsers: () => void;
   onSend: () => void;
@@ -1675,37 +2148,52 @@ function GeneratedMessageScreen({
   sending: boolean;
   statusText: string;
 }) {
-  const selectedUserNames = selectedUsers.map((user) => user.userName).join("、");
+  const manualSendUserIdSet = new Set(manualSendUserIds);
 
   return (
     <section className="generated-message-screen">
       <div className="generated-message-header">
         <div>
-          <h2>メッセージ</h2>
+          <h2>メッセージ送信</h2>
           <p className="status-text">
             作成ボタンで今日の一言メッセージを自動生成し、選択中のユーザへ送信します。
           </p>
         </div>
-      </div>
-
-      <div className="panel generated-message-panel">
         <div className="generated-message-toolbar">
           <button disabled={generating || sending} onClick={onGenerate} type="button">
             {generating ? "作成中..." : "作成"}
           </button>
           <button
-            disabled={!message.trim() || selectedUsers.length === 0 || generating || sending}
+            disabled={!message.trim() || manualSendUsers.length === 0 || generating || sending}
             onClick={onSend}
             type="button"
           >
             {sending ? "送信中..." : "送信"}
           </button>
         </div>
+      </div>
 
+      <div className="panel generated-message-panel">
         <div className="generated-message-targets">
           <div className="generated-message-target-copy">
             <span>送信先</span>
-            <strong>{selectedUsers.length ? `${selectedUsers.length}名：${selectedUserNames}` : "未選択"}</strong>
+            {selectedUsers.length ? (
+              <div className="manual-send-targets">
+                <strong className="manual-send-target-count">{manualSendUsers.length}名：</strong>
+                {selectedUsers.map((user) => (
+                  <label className="manual-send-target" key={user.userId}>
+                    <input
+                      checked={manualSendUserIdSet.has(user.userId)}
+                      onChange={(event) => onManualSendUserSelectionChange(user.userId, event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span>{user.userName}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <strong>未選択</strong>
+            )}
           </div>
           <button className="secondary" disabled={loadingUsers} onClick={onOpenUsers} type="button">
             {loadingUsers ? "ユーザ情報を読込中..." : "ユーザ情報を選択"}
@@ -1730,7 +2218,7 @@ function GeneratedMessageScreen({
         <div className="automation-settings-header">
           <div>
             <h3>自動送信設定</h3>
-            <p className="status-text">毎朝の自動送信は選択中のユーザに送信されます。</p>
+            <p className="status-text">自動送信はユーザ情報で選択中の全ユーザに送信されます。</p>
           </div>
           <label className="notification-toggle automation-toggle">
             <span className="notification-toggle-copy">
@@ -2023,6 +2511,54 @@ function formatCronHistoryStatus(status: string) {
   }
 
   return "失敗";
+}
+
+function toCalendarEventDraft(event: CalendarEventView): CalendarEventDraft {
+  return {
+    enabled: event.enabled,
+    eventText: event.eventText,
+    monthDay: formatCalendarMonthDayForDisplay(event.monthDay),
+  };
+}
+
+function sortCalendarEventsForDisplay(events: CalendarEventView[]) {
+  return [...events].sort(
+    (left, right) =>
+      left.monthDay.localeCompare(right.monthDay) ||
+      left.sortOrder - right.sortOrder ||
+      (left.createdAt ?? "").localeCompare(right.createdAt ?? "") ||
+      left.eventId.localeCompare(right.eventId),
+  );
+}
+
+function getTodayCalendarEventsForDisplay(events: CalendarEventView[]) {
+  const monthDay = getCalendarMonthDayInJapan(new Date());
+
+  return sortCalendarEventsForDisplay(events.filter((event) => event.enabled && event.monthDay === monthDay));
+}
+
+function getCalendarMonthDayInJapan(date: Date) {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    day: "numeric",
+    month: "numeric",
+    timeZone: "Asia/Tokyo",
+  }).formatToParts(date);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+
+  return `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function formatCalendarMonthDayForDisplay(monthDay: string) {
+  return monthDay.replace("-", "/");
+}
+
+function formatCalendarEventsText(events: CalendarEventView[]) {
+  return events.map((event) => event.eventText).filter(Boolean).join("、");
+}
+
+function formatAccountEmailLocalPart(email: string) {
+  return email.split("@")[0]?.trim() || email;
 }
 
 function formatTime(value: string) {
