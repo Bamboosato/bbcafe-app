@@ -1008,7 +1008,14 @@ label {
   justify-content: flex-end;
 }
 
+.user-info-action-buttons {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
 .user-info-actions .status-text {
+  flex: 1 1 220px;
   text-align: right;
 }
 
@@ -1574,9 +1581,12 @@ label {
     flex: 0 0 auto;
   }
 
-  .settings-actions button,
-  .user-info-actions button {
+  .settings-actions button {
     flex: 0 0 auto;
+    justify-self: end;
+  }
+
+  .user-info-action-buttons {
     justify-self: end;
   }
 

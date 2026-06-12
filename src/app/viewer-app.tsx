@@ -2204,12 +2204,14 @@ function UserInfoScreen({
           <p className="status-text">
             {importingLineFollowers ? "LINEの友だち一覧を取り込み中です。" : loading ? "ユーザ情報を更新中です。" : statusText}
           </p>
-          <button className="secondary" onClick={onImportLineFollowers} type="button" disabled={importingLineFollowers || loading}>
-            {importingLineFollowers ? "取込中..." : "取込"}
-          </button>
-          <button onClick={onRefresh} type="button" disabled={loading || importingLineFollowers}>
-            更新
-          </button>
+          <div className="user-info-action-buttons">
+            <button className="secondary" onClick={onImportLineFollowers} type="button" disabled={importingLineFollowers || loading}>
+              {importingLineFollowers ? "取込中..." : "取込"}
+            </button>
+            <button onClick={onRefresh} type="button" disabled={loading || importingLineFollowers}>
+              更新
+            </button>
+          </div>
         </div>
       </div>
 
