@@ -8,6 +8,7 @@ import { markConfirmationFromPostback } from "./confirmations";
 
 const FALLBACK_GROUP_NAME = "ユーザグループ";
 const FALLBACK_USER_NAME = "不明なユーザー";
+const LINE_FOLLOWERS_PAGE_LIMIT = 1000;
 
 type LineWebhookPayload = {
   events?: LineWebhookEvent[];
@@ -43,6 +44,13 @@ type LineWebhookEvent = {
   };
 };
 
+export type ImportLineFollowersResult = {
+  failedProfileCount: number;
+  importedCount: number;
+  pageCount: number;
+  totalFollowerCount: number;
+};
+
 export function verifyLineSignature(rawBody: string, signature: string | null, channelSecret: string) {
   if (!signature) {
     return false;
@@ -62,6 +70,7 @@ export async function processLineWebhookEvents(input: {
   const results = {
     confirmed: 0,
     deleted: 0,
+    followed: 0,
     ignored: 0,
     saved: 0,
   };
@@ -93,6 +102,17 @@ export async function processLineWebhookEvents(input: {
       continue;
     }
 
+    if (event.type === "follow") {
+      const followed = await processFollowEvent(input.lineAccountId, input.channelAccessToken, event);
+
+      if (followed) {
+        results.followed += 1;
+      } else {
+        results.ignored += 1;
+      }
+      continue;
+    }
+
     if (event.type === "unsend" && event.unsend?.messageId) {
       results.deleted += await deleteMessagesByLineMessageId(input.lineAccountId, event.unsend.messageId);
       continue;
@@ -102,6 +122,54 @@ export async function processLineWebhookEvents(input: {
   }
 
   return results;
+}
+
+export async function importLineFollowers(input: {
+  channelAccessToken: string;
+  lineAccountId: string;
+}): Promise<ImportLineFollowersResult> {
+  let failedProfileCount = 0;
+  let importedCount = 0;
+  let pageCount = 0;
+  let start: null | string = null;
+  let totalFollowerCount = 0;
+  const importedAt = new Date();
+
+  do {
+    const page = await fetchFollowerIds(input.channelAccessToken, start);
+    pageCount += 1;
+    totalFollowerCount += page.userIds.length;
+
+    for (const userId of page.userIds) {
+      const userName = await resolveSenderDisplayName(input.channelAccessToken, {
+        groupId: null,
+        sourceType: "user",
+        sourceUserId: userId,
+      });
+
+      if (userName === FALLBACK_USER_NAME) {
+        failedProfileCount += 1;
+      }
+
+      await upsertBroadcastUser({
+        firstSeenAt: importedAt,
+        lastSeenAt: importedAt,
+        lineAccountId: input.lineAccountId,
+        userId,
+        userName,
+      });
+      importedCount += 1;
+    }
+
+    start = page.next ?? null;
+  } while (start);
+
+  return {
+    failedProfileCount,
+    importedCount,
+    pageCount,
+    totalFollowerCount,
+  };
 }
 
 async function processTextMessageEvent(
@@ -170,6 +238,35 @@ async function processTextMessageEvent(
   return result.created;
 }
 
+async function processFollowEvent(
+  lineAccountId: string,
+  channelAccessToken: string,
+  event: LineWebhookEvent,
+) {
+  const sourceUserId = event.source?.userId ?? null;
+
+  if (!sourceUserId) {
+    return false;
+  }
+
+  const followedAt = typeof event.timestamp === "number" ? new Date(event.timestamp) : new Date();
+  const sourceUserDisplayName = await resolveSenderDisplayName(channelAccessToken, {
+    groupId: null,
+    sourceType: "user",
+    sourceUserId,
+  });
+
+  await upsertBroadcastUser({
+    firstSeenAt: followedAt,
+    lastSeenAt: followedAt,
+    lineAccountId,
+    userId: sourceUserId,
+    userName: sourceUserDisplayName,
+  });
+
+  return true;
+}
+
 function normalizeLineSourceType(sourceType: NonNullable<LineWebhookEvent["source"]>["type"]) {
   return sourceType === "group" || sourceType === "room" || sourceType === "user" ? sourceType : "user";
 }
@@ -227,4 +324,34 @@ async function fetchLineJson<T>(channelAccessToken: string, path: string): Promi
   } catch {
     return null;
   }
+}
+
+async function fetchFollowerIds(channelAccessToken: string, start: null | string) {
+  const params = new URLSearchParams({
+    limit: String(LINE_FOLLOWERS_PAGE_LIMIT),
+  });
+
+  if (start) {
+    params.set("start", start);
+  }
+
+  const response = await fetch(`https://api.line.me/v2/bot/followers/ids?${params.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${channelAccessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`LINE_FOLLOWERS_IDS_${response.status}`);
+  }
+
+  const data = (await response.json()) as {
+    next?: string;
+    userIds?: unknown;
+  };
+
+  return {
+    next: typeof data.next === "string" && data.next.trim() ? data.next : null,
+    userIds: Array.isArray(data.userIds) ? data.userIds.filter((userId): userId is string => typeof userId === "string") : [],
+  };
 }

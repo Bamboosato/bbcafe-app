@@ -64,6 +64,13 @@ type UserResponse = {
   user: UserInfoView;
 };
 
+type ImportLineFollowersResponse = {
+  failedProfileCount: number;
+  importedCount: number;
+  pageCount: number;
+  totalFollowerCount: number;
+};
+
 type CalendarEventsResponse = {
   events: CalendarEventView[];
   todayEvents: CalendarEventView[];
@@ -223,6 +230,7 @@ export default function ViewerApp({
   const [loadingConfirmationTargets, setLoadingConfirmationTargets] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingUsersSummary, setLoadingUsersSummary] = useState(false);
+  const [importingLineFollowers, setImportingLineFollowers] = useState(false);
   const [loadingCalendarEvents, setLoadingCalendarEvents] = useState(false);
   const [loadingCommonSettings, setLoadingCommonSettings] = useState(false);
   const [loadingCronHistory, setLoadingCronHistory] = useState(false);
@@ -1113,6 +1121,33 @@ export default function ViewerApp({
     setSelectedUserCount((current) => Math.max(0, current + (selected ? 1 : -1)));
   }
 
+  async function handleImportLineFollowers() {
+    if (importingLineFollowers) {
+      return;
+    }
+
+    setImportingLineFollowers(true);
+    setError("");
+    setStatus("LINEの友だち一覧を取り込んでいます。");
+
+    try {
+      const result = await fetchJson<ImportLineFollowersResponse>("/api/users/import-line-followers", {
+        method: "POST",
+      });
+
+      if (result.error || !result.data) {
+        setError(result.error?.message ?? "LINEの友だち一覧を取り込めません。");
+        return;
+      }
+
+      await loadUsers();
+      await loadUsersSummary();
+      setStatus(`LINE友だち取込: ${result.data.importedCount}件を保存しました。`);
+    } finally {
+      setImportingLineFollowers(false);
+    }
+  }
+
   function handleManualSendUserSelectionChange(userId: string, selected: boolean) {
     setManualSendUserIds((current) => {
       if (selected) {
@@ -1559,7 +1594,9 @@ export default function ViewerApp({
 
       {currentView === "users" ? (
         <UserInfoScreen
+          importingLineFollowers={importingLineFollowers}
           loading={loadingUsers}
+          onImportLineFollowers={() => void handleImportLineFollowers()}
           onRefresh={() => void loadUsers()}
           onSelectionChange={handleUserSelectionChange}
           selectedUserIds={selectedUserIds}
@@ -2138,14 +2175,18 @@ function CronHistoryScreen({
 }
 
 function UserInfoScreen({
+  importingLineFollowers,
   loading,
+  onImportLineFollowers,
   onRefresh,
   onSelectionChange,
   selectedUserIds,
   statusText,
   users,
 }: {
+  importingLineFollowers: boolean;
   loading: boolean;
+  onImportLineFollowers: () => void;
   onRefresh: () => void;
   onSelectionChange: (userId: string, selected: boolean) => void;
   selectedUserIds: string[];
@@ -2160,8 +2201,13 @@ function UserInfoScreen({
           <p className="status-text">自動送信と手動送信の送信対象を管理します。</p>
         </div>
         <div className="user-info-actions">
-          <p className="status-text">{loading ? "ユーザ情報を更新中です。" : statusText}</p>
-          <button onClick={onRefresh} type="button" disabled={loading}>
+          <p className="status-text">
+            {importingLineFollowers ? "LINEの友だち一覧を取り込み中です。" : loading ? "ユーザ情報を更新中です。" : statusText}
+          </p>
+          <button className="secondary" onClick={onImportLineFollowers} type="button" disabled={importingLineFollowers || loading}>
+            {importingLineFollowers ? "取込中..." : "取込"}
+          </button>
+          <button onClick={onRefresh} type="button" disabled={loading || importingLineFollowers}>
             更新
           </button>
         </div>
