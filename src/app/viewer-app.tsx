@@ -1093,6 +1093,18 @@ export default function ViewerApp({
     setSelectedMessage((current) => (current && !matchesMessageFilter(current, nextFilter) ? null : current));
   }
 
+  async function handleHomeRefresh() {
+    setError("");
+    await Promise.all([
+      loadSentRuns(),
+      loadConfirmationTargets(),
+      loadUsersSummary(),
+      loadCalendarEvents(),
+      loadCronHistory(),
+    ]);
+    setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
+  }
+
   async function handleUserSelectionChange(userId: string, selected: boolean) {
     const previousUsers = users;
 
@@ -1583,6 +1595,7 @@ export default function ViewerApp({
           onOpenCron={() => navigateToView("cron-runs")}
           onOpenGeneratedMessage={showGeneratedMessageView}
           onOpenMessages={() => navigateToView("messages")}
+          onRefresh={() => void handleHomeRefresh()}
           onOpenSent={() => navigateToView("sent")}
           onOpenSettings={() => navigateToView("settings")}
           onOpenUsers={showUserInfoView}
@@ -1784,6 +1797,7 @@ function HomeScreen({
   onOpenCron,
   onOpenGeneratedMessage,
   onOpenMessages,
+  onRefresh,
   onOpenSent,
   onOpenSettings,
   onOpenUsers,
@@ -1798,6 +1812,7 @@ function HomeScreen({
   onOpenCron: () => void;
   onOpenGeneratedMessage: () => void;
   onOpenMessages: () => void;
+  onRefresh: () => void;
   onOpenSent: () => void;
   onOpenSettings: () => void;
   onOpenUsers: () => void;
@@ -1872,6 +1887,9 @@ function HomeScreen({
           </button>
           <button className="secondary" onClick={onOpenMessages} type="button">
             受信履歴を確認
+          </button>
+          <button className="secondary" disabled={loading} onClick={onRefresh} type="button">
+            更新
           </button>
         </div>
       </div>
