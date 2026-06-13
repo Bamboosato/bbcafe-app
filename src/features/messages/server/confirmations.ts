@@ -278,6 +278,43 @@ export async function listUnconfirmedConfirmationTargets(lineAccountId: string) 
     );
 }
 
+export async function markUnconfirmedConfirmationTargetsConfirmed(lineAccountId: string) {
+  const targets = await listUnconfirmedConfirmationTargets(lineAccountId);
+
+  if (!targets.length) {
+    return 0;
+  }
+
+  const confirmedAt = new Date();
+  const db = getAdminDb();
+  let batch = db.batch();
+  let batchSize = 0;
+
+  for (const target of targets) {
+    batch.update(confirmationTargetRef(lineAccountId, target.userId), {
+      confirmedAt: Timestamp.fromDate(confirmedAt),
+      status: "confirmed",
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    batchSize += 1;
+
+    if (batchSize >= 450) {
+      await batch.commit();
+      batch = db.batch();
+      batchSize = 0;
+    }
+  }
+
+  if (batchSize > 0) {
+    await batch.commit();
+  }
+
+  await markSendRunTargetsConfirmed(lineAccountId, targets, confirmedAt);
+
+  return targets.length;
+}
+
 export function buildConfirmationCheckSnapshot(targets: ConfirmationTargetRecord[]) {
   const confirmedTargets = targets
     .filter((target) => target.status === "confirmed")
@@ -424,6 +461,57 @@ async function markSendRunTargetsReminded(
         confirmationStatus: "reminded",
         confirmedAt: target.confirmedAt ?? null,
         reminderSentAt: Timestamp.fromDate(remindedAt),
+      };
+    });
+
+    if (changed) {
+      await ref.update({
+        targets: nextTargets,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+  }
+}
+
+async function markSendRunTargetsConfirmed(
+  lineAccountId: string,
+  targets: ConfirmationTargetRecord[],
+  confirmedAt: Date,
+) {
+  const targetsByRunId = new Map<string, Set<string>>();
+
+  targets.forEach((target) => {
+    const userIds = targetsByRunId.get(target.runId) ?? new Set<string>();
+
+    userIds.add(target.userId);
+    targetsByRunId.set(target.runId, userIds);
+  });
+
+  for (const [runId, userIds] of targetsByRunId) {
+    const ref = sendRunRef(lineAccountId, runId);
+    const snapshot = await ref.get();
+
+    if (!snapshot.exists) {
+      continue;
+    }
+
+    const data = snapshot.data() ?? {};
+    const currentTargets = Array.isArray(data.targets) ? data.targets : [];
+    let changed = false;
+    const nextTargets = currentTargets.map((value) => {
+      const target = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+
+      if (!userIds.has(String(target.userId ?? "")) || target.status === "failed") {
+        return value;
+      }
+
+      changed = true;
+
+      return {
+        ...target,
+        confirmationStatus: "confirmed",
+        confirmedAt: Timestamp.fromDate(confirmedAt),
+        reminderSentAt: target.reminderSentAt ?? null,
       };
     });
 

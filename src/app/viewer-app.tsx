@@ -145,6 +145,10 @@ type ConfirmationTargetsResponse = {
   targets: HomeConfirmationTarget[];
 };
 
+type ResetConfirmationTargetsResponse = {
+  resetCount: number;
+};
+
 const HISTORY_PAGE_LIMIT = 20;
 
 function buildHistoryPageUrl(path: string, cursor: null | string) {
@@ -228,6 +232,7 @@ export default function ViewerApp({
   const [loadingSentRuns, setLoadingSentRuns] = useState(false);
   const [loadingMoreSentRuns, setLoadingMoreSentRuns] = useState(false);
   const [loadingConfirmationTargets, setLoadingConfirmationTargets] = useState(false);
+  const [resettingConfirmationTargets, setResettingConfirmationTargets] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingUsersSummary, setLoadingUsersSummary] = useState(false);
   const [importingLineFollowers, setImportingLineFollowers] = useState(false);
@@ -1061,6 +1066,7 @@ export default function ViewerApp({
     setLoadingMoreSentRuns(false);
     setConfirmationTargets([]);
     setLoadingConfirmationTargets(false);
+    setResettingConfirmationTargets(false);
     loadingConfirmationTargetsRef.current = false;
     setUsers([]);
     setSelectedUserCount(0);
@@ -1103,6 +1109,28 @@ export default function ViewerApp({
       loadCronHistory(),
     ]);
     setStatus(`最終更新: ${formatTime(new Date().toISOString())}`);
+  }
+
+  async function handleResetConfirmationTargets() {
+    setError("");
+    setStatus("");
+    setResettingConfirmationTargets(true);
+
+    try {
+      const result = await fetchJson<ResetConfirmationTargetsResponse>("/api/confirmation-targets", {
+        method: "POST",
+      });
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      await Promise.all([loadConfirmationTargets(), loadSentRuns()]);
+      setStatus(`未確認をリセットしました: ${result.data?.resetCount ?? 0}名`);
+    } finally {
+      setResettingConfirmationTargets(false);
+    }
   }
 
   async function handleUserSelectionChange(userId: string, selected: boolean) {
@@ -1587,6 +1615,7 @@ export default function ViewerApp({
           loading={
             loadingSentRuns ||
             loadingConfirmationTargets ||
+            resettingConfirmationTargets ||
             loadingUsersSummary ||
             loadingCalendarEvents ||
             loadingCronHistory
@@ -1601,6 +1630,8 @@ export default function ViewerApp({
           onOpenUsers={showUserInfoView}
           selectedUserCount={selectedUserCount}
           sentRuns={sentRuns}
+          resettingConfirmationTargets={resettingConfirmationTargets}
+          onResetConfirmationTargets={() => void handleResetConfirmationTargets()}
           todayCalendarEvents={todayCalendarEvents}
         />
       ) : null}
@@ -1803,6 +1834,8 @@ function HomeScreen({
   onOpenUsers,
   selectedUserCount,
   sentRuns,
+  resettingConfirmationTargets,
+  onResetConfirmationTargets,
   todayCalendarEvents,
 }: {
   confirmationTargets: HomeConfirmationTarget[];
@@ -1818,6 +1851,8 @@ function HomeScreen({
   onOpenUsers: () => void;
   selectedUserCount: number;
   sentRuns: SendRunView[];
+  resettingConfirmationTargets: boolean;
+  onResetConfirmationTargets: () => void;
   todayCalendarEvents: CalendarEventView[];
 }) {
   const unconfirmedTargets = confirmationTargets
@@ -1876,6 +1911,14 @@ function HomeScreen({
               </button>
               <button className="secondary" onClick={onOpenCron} type="button">
                 Cron履歴
+              </button>
+              <button
+                className="secondary"
+                disabled={resettingConfirmationTargets}
+                onClick={onResetConfirmationTargets}
+                type="button"
+              >
+                {resettingConfirmationTargets ? "リセット中..." : "未確認をリセット"}
               </button>
             </div>
           </section>
