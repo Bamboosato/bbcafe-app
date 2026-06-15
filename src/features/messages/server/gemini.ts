@@ -1,3 +1,4 @@
+import { getBirthFlowerForDate, type BirthFlower } from "./birthFlowers";
 import { getNagoyaWeatherInfo } from "./weather";
 
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
@@ -103,6 +104,7 @@ export async function generateDailyGreetingMessage({
   const models = getGeminiModelCandidates();
   const timeOfDayGreeting = getTimeOfDayGreeting(today);
   const greetingContext = await buildDailyGreetingContext({ today, weatherInfo });
+  const birthFlower = getBirthFlowerForDate(today, DAILY_GREETING_TIME_ZONE);
   const generateContentConfig: GenerateContentConfig = {
     maxOutputTokens: DAILY_GREETING_MAX_OUTPUT_TOKENS,
     temperature: 0.8,
@@ -117,6 +119,7 @@ export async function generateDailyGreetingMessage({
   for (let contentAttempt = 0; contentAttempt < contentMaxAttempts; contentAttempt += 1) {
     const prompt = buildDailyGreetingPrompt({
       ...greetingContext,
+      birthFlower,
       calendarEventInfo,
       location,
       recentOpeningKeywords,
@@ -470,6 +473,7 @@ function toBigramCounts(value: string) {
 }
 
 function buildDailyGreetingPrompt({
+  birthFlower,
   calendarEventInfo,
   dateInfo,
   location,
@@ -477,6 +481,7 @@ function buildDailyGreetingPrompt({
   timeOfDayGreeting,
   weatherInfo,
 }: {
+  birthFlower: BirthFlower | null;
   calendarEventInfo?: string;
   dateInfo: string;
   location: string;
@@ -487,6 +492,9 @@ function buildDailyGreetingPrompt({
   const normalizedCalendarEventInfo = calendarEventInfo?.trim();
   const calendarEventInfoLine = normalizedCalendarEventInfo
     ? `・今日の大切な予定: ${normalizedCalendarEventInfo}\n`
+    : "";
+  const birthFlowerInfoLine = birthFlower
+    ? `・今日の誕生花: ${birthFlower.flower}\n・誕生花の花言葉: ${birthFlower.language}\n`
     : "";
   const characterCountRule = normalizedCalendarEventInfo ? "80文字〜130文字" : "60文字〜95文字";
   const recentOpeningKeywordsText = recentOpeningKeywords.map((keyword) => `・${keyword}`).join("\n");
@@ -500,7 +508,7 @@ function buildDailyGreetingPrompt({
 
 【今日の情報】
 ・日付: ${dateInfo}
-${calendarEventInfoLine}・天気予報: ${weatherInfo}
+${calendarEventInfoLine}${birthFlowerInfoLine}・天気予報: ${weatherInfo}
 ${recentOpeningKeywordsSection}
 
 【お年寄り向けの絶対ルール】
@@ -512,7 +520,7 @@ ${recentOpeningKeywordsSection}
 6. 今日の大切な予定は、自然な日本語に整えてください。人名と思われる名前には「さん」を付けてください。
    例: 「千夏子の誕生日」→「今日は千夏子さんのお誕生日ですね。」
    例: 「岳夫と由美子の結婚記念日」→「今日は岳夫さんと由美子さんの結婚記念日ですね。」
-7. 指定された日付の「今日の誕生花」を、日本人に馴染みの深い代表的な花から1つだけ選び、その花の花言葉を1つだけ添えてください。
+7. 【今日の情報】の「今日の誕生花」と「誕生花の花言葉」を必ずそのまま使い、別の花や別の花言葉に置き換えないでください。
 8. 誕生花は必ず「今日の誕生花は○○○、花言葉は△△△△△です。」という形で本文に入れてください。
 9. お年寄りが「ああ、もうそんな季節か」と感じられる、雑学的でやさしい表現にしてください。
 10. 文字数は「${characterCountRule}」の範囲内に収めてください。
