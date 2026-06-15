@@ -67,12 +67,44 @@ describe("generateDailyGreetingMessage", () => {
     expect(requestBody.contents[0].parts[0].text).toContain("【熱中症警戒】");
     expect(requestBody.contents[0].parts[0].text).toContain("季節の言葉");
     expect(requestBody.contents[0].parts[0].text).toContain("今日の大切な予定がある場合");
-    expect(requestBody.contents[0].parts[0].text).toContain("今日の誕生花");
-    expect(requestBody.contents[0].parts[0].text).toContain("日本人に馴染みの深い代表的な花から1つだけ");
+    expect(requestBody.contents[0].parts[0].text).toContain("今日の誕生花: 宿根アマ");
+    expect(requestBody.contents[0].parts[0].text).toContain("誕生花の花言葉: ご親切にありがとう");
+    expect(requestBody.contents[0].parts[0].text).toContain("別の花や別の花言葉に置き換えない");
     expect(requestBody.contents[0].parts[0].text).toContain("今日の誕生花は○○○、花言葉は△△△△△です。");
     expect(requestBody.contents[0].parts[0].text).toContain("ああ、もうそんな季節か");
     expect(requestBody.contents[0].parts[0].text).toContain("60文字〜95文字");
     expect(result.text).toBe("お早うございます。\n今日は6月7日、穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
+  });
+
+  it("passes the birth flower master value for the Japan calendar date", async () => {
+    process.env.GEMINI_API_KEY = "test-api-key";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "今日は6月15日、梅雨どきの花が目にやさしい一日です。水分をとってください。" }],
+            },
+            finishReason: "STOP",
+          },
+        ],
+      }),
+    );
+
+    const result = await generateDailyGreetingMessage({
+      location: "名古屋市",
+      today: new Date("2026-06-14T15:00:00Z"),
+      weatherInfo: TEST_WEATHER_INFO,
+    });
+
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.contents[0].parts[0].text).toContain("日付: 6月15日");
+    expect(requestBody.contents[0].parts[0].text).toContain("今日の誕生花: ムラサキツユクサ");
+    expect(requestBody.contents[0].parts[0].text).toContain("誕生花の花言葉: 尊敬しています");
+    expect(requestBody.contents[0].parts[0].text).not.toContain("今日の誕生花: アジサイ");
+    expect(result.text).toBe(
+      "こんばんは。\n今日は6月15日、梅雨どきの花が目にやさしい一日です。水分をとってください。",
+    );
   });
 
   it("passes today's calendar event as the highest priority greeting topic", async () => {
