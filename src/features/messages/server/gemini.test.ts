@@ -35,7 +35,7 @@ describe("generateDailyGreetingMessage", () => {
     delete process.env.MESSAGE_LOCATION;
   });
 
-  it("requests a short no-thinking daily greeting with Nagoya weather context", async () => {
+  it("requests a short minimally-thinking daily greeting with Nagoya weather context", async () => {
     process.env.GEMINI_API_KEY = "test-api-key";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
@@ -57,9 +57,10 @@ describe("generateDailyGreetingMessage", () => {
 
     const requestInit = fetchMock.mock.calls[0]?.[1];
     const requestBody = JSON.parse(String(requestInit?.body));
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/models/gemini-2.5-flash:generateContent");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/models/gemini-3.5-flash-lite:generateContent");
     expect(requestBody.generationConfig.maxOutputTokens).toBe(300);
-    expect(requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    expect(requestBody.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "minimal" });
+    expect(requestBody.generationConfig).not.toHaveProperty("temperature");
     expect(requestBody.contents[0].parts[0].text).toContain("本文の冒頭は必ず「お早うございます。」");
     expect(requestBody.contents[0].parts[0].text).toContain("日付: 6月7日");
     expect(requestBody.contents[0].parts[0].text).toContain("必ず「今日は6月7日、」");
@@ -254,7 +255,7 @@ describe("generateDailyGreetingMessage", () => {
     expect(result.text).toBe("お早うございます。\n今日は6月11日、もうすぐ夏至で日が長くなる頃ですね。水分をとってください。");
   });
 
-  it("falls back to flash-lite when the primary Gemini model is temporarily unavailable", async () => {
+  it("falls back to Gemini 2.5 Flash when the primary Gemini model is temporarily unavailable", async () => {
     process.env.GEMINI_API_KEY = "test-api-key";
     process.env.GEMINI_MAX_RETRIES_PER_MODEL = "0";
     process.env.GEMINI_RETRY_DELAY_MS = "0";
@@ -285,8 +286,19 @@ describe("generateDailyGreetingMessage", () => {
     const result = await generateDailyGreetingMessage(TEST_GENERATION_OPTIONS);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/models/gemini-2.5-flash:generateContent");
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/models/gemini-2.5-flash-lite:generateContent");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/models/gemini-3.5-flash-lite:generateContent");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/models/gemini-2.5-flash:generateContent");
+    const primaryBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const fallbackBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(primaryBody.generationConfig).toEqual({
+      maxOutputTokens: 300,
+      thinkingConfig: { thinkingLevel: "minimal" },
+    });
+    expect(fallbackBody.generationConfig).toEqual({
+      maxOutputTokens: 300,
+      temperature: 0.8,
+      thinkingConfig: { thinkingBudget: 0 },
+    });
     expect(result.text).toBe("お早うございます。\n今日は6月7日、穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
   });
 
