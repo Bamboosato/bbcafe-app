@@ -1,8 +1,8 @@
 import { getBirthFlowerForDate, type BirthFlower } from "./birthFlowers";
 import { getNagoyaWeatherInfo } from "./weather";
 
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const DEFAULT_GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
+const DEFAULT_GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash"];
 const DEFAULT_GEMINI_MAX_RETRIES_PER_MODEL = 1;
 const DEFAULT_GEMINI_RETRY_DELAY_MS = 700;
 const DEFAULT_MESSAGE_LOCATION = "名古屋市";
@@ -54,15 +54,19 @@ type GeminiErrorResponse = {
 
 type GenerateContentConfig = {
   maxOutputTokens: number;
-  temperature: number;
-  thinkingConfig: {
-    thinkingBudget: number;
-  };
+  temperature?: number;
+  thinkingConfig:
+    | {
+        thinkingBudget: number;
+      }
+    | {
+        thinkingLevel: "high" | "low" | "medium" | "minimal";
+      };
 };
 
 type GeminiGenerateContentRequest = {
   apiKey: string;
-  body: string;
+  buildBody: (model: string) => string;
   maxRetriesPerModel: number;
   models: string[];
   retryDelayMs: number;
@@ -105,13 +109,6 @@ export async function generateDailyGreetingMessage({
   const timeOfDayGreeting = getTimeOfDayGreeting(today);
   const greetingContext = await buildDailyGreetingContext({ today, weatherInfo });
   const birthFlower = getBirthFlowerForDate(today, DAILY_GREETING_TIME_ZONE);
-  const generateContentConfig: GenerateContentConfig = {
-    maxOutputTokens: DAILY_GREETING_MAX_OUTPUT_TOKENS,
-    temperature: 0.8,
-    thinkingConfig: {
-      thinkingBudget: 0,
-    },
-  };
   const contentMaxAttempts = recentOpeningExamples.length > 0 ? DAILY_GREETING_CONTENT_MAX_ATTEMPTS : 1;
   let recentOpeningKeywords = buildRecentGreetingOpeningKeywords(recentOpeningExamples);
   let lastRepeatedText: string | undefined;
@@ -127,14 +124,14 @@ export async function generateDailyGreetingMessage({
     });
     const payload = await generateGeminiContent({
       apiKey,
-      body: JSON.stringify({
+      buildBody: (model) => JSON.stringify({
         contents: [
           {
             parts: [{ text: prompt }],
             role: "user",
           },
         ],
-        generationConfig: generateContentConfig,
+        generationConfig: getGeminiGenerationConfig(model),
       }),
       maxRetriesPerModel: getGeminiMaxRetriesPerModel(),
       models,
@@ -198,7 +195,7 @@ export async function generateDailyGreetingMessage({
 
 async function generateGeminiContent({
   apiKey,
-  body,
+  buildBody,
   maxRetriesPerModel,
   models,
   retryDelayMs,
@@ -210,7 +207,7 @@ async function generateGeminiContent({
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
         {
-          body,
+          body: buildBody(model),
           headers: {
             "Content-Type": "application/json",
             "x-goog-api-key": apiKey,
@@ -634,6 +631,25 @@ function getGeminiModelCandidates() {
   const fallbackModels = configuredFallbackModels.length ? configuredFallbackModels : DEFAULT_GEMINI_FALLBACK_MODELS;
 
   return [...new Set([primaryModel, ...fallbackModels])];
+}
+
+function getGeminiGenerationConfig(model: string): GenerateContentConfig {
+  if (/^gemini-3(?:\.\d+)?-/i.test(model)) {
+    return {
+      maxOutputTokens: DAILY_GREETING_MAX_OUTPUT_TOKENS,
+      thinkingConfig: {
+        thinkingLevel: "minimal",
+      },
+    };
+  }
+
+  return {
+    maxOutputTokens: DAILY_GREETING_MAX_OUTPUT_TOKENS,
+    temperature: 0.8,
+    thinkingConfig: {
+      thinkingBudget: 0,
+    },
+  };
 }
 
 function getGeminiMaxRetriesPerModel() {

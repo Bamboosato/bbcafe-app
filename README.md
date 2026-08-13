@@ -56,7 +56,7 @@ WEB_PUSH_PRIVATE_KEY=<generated private key>
 WEB_PUSH_SUBJECT=mailto:your-contact@example.com
 ```
 
-メッセージ作成は `GEMINI_MODEL` を優先し、一時的な高負荷やレート制限では短く再試行したあと `GEMINI_FALLBACK_MODELS` の順にフォールバックします。未設定時のフォールバック先は `gemini-2.5-flash-lite` です。
+メッセージ作成は `GEMINI_MODEL` を優先し、一時的な高負荷やレート制限では短く再試行したあと `GEMINI_FALLBACK_MODELS` の順にフォールバックします。未設定時の主系は `gemini-3.5-flash-lite`、フォールバック先は `gemini-2.5-flash` です。
 
 Firestoreはサーバー側のFirebase Admin SDKからのみアクセスする前提です。`firestore.rules` はクライアント直読みを拒否し、`firestore.indexes.json` に必要な複合indexを定義しています。
 
