@@ -68,16 +68,17 @@ describe("generateDailyGreetingMessage", () => {
     expect(requestBody.contents[0].parts[0].text).toContain("【熱中症警戒】");
     expect(requestBody.contents[0].parts[0].text).toContain("季節の言葉");
     expect(requestBody.contents[0].parts[0].text).toContain("今日の大切な予定がある場合");
-    expect(requestBody.contents[0].parts[0].text).toContain("今日の誕生花: 宿根アマ");
-    expect(requestBody.contents[0].parts[0].text).toContain("誕生花の花言葉: ご親切にありがとう");
-    expect(requestBody.contents[0].parts[0].text).toContain("別の花や別の花言葉に置き換えない");
-    expect(requestBody.contents[0].parts[0].text).toContain("今日の誕生花は○○○、花言葉は△△△△△です。");
+    expect(requestBody.contents[0].parts[0].text).toContain("誕生花、花言葉、参照URLは本文に出力しない");
+    expect(requestBody.contents[0].parts[0].text).not.toContain("今日の誕生花: 宿根アマ");
+    expect(requestBody.contents[0].parts[0].text).not.toContain("今日の誕生花は○○○、花言葉は△△△△△です。");
     expect(requestBody.contents[0].parts[0].text).toContain("ああ、もうそんな季節か");
     expect(requestBody.contents[0].parts[0].text).toContain("60文字〜95文字");
-    expect(result.text).toBe("お早うございます。\n今日は6月7日、穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
+    expect(result.text).toBe(
+      "お早うございます。\n今日は6月7日、穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。\n\n今日の誕生花は宿根アマ、花言葉はご親切にありがとうです。\nhttps://www.i879.com/birth/flower/06/07/",
+    );
   });
 
-  it("passes the birth flower master value for the Japan calendar date", async () => {
+  it("appends the birth flower master value and source URL for the Japan calendar date", async () => {
     process.env.GEMINI_API_KEY = "test-api-key";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
@@ -100,11 +101,9 @@ describe("generateDailyGreetingMessage", () => {
 
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(requestBody.contents[0].parts[0].text).toContain("日付: 6月15日");
-    expect(requestBody.contents[0].parts[0].text).toContain("今日の誕生花: ムラサキツユクサ");
-    expect(requestBody.contents[0].parts[0].text).toContain("誕生花の花言葉: 尊敬しています");
-    expect(requestBody.contents[0].parts[0].text).not.toContain("今日の誕生花: アジサイ");
+    expect(requestBody.contents[0].parts[0].text).not.toContain("今日の誕生花: ムラサキツユクサ");
     expect(result.text).toBe(
-      "こんばんは。\n今日は6月15日、梅雨どきの花が目にやさしい一日です。水分をとってください。",
+      "こんばんは。\n今日は6月15日、梅雨どきの花が目にやさしい一日です。水分をとってください。\n\n今日の誕生花はムラサキツユクサ、花言葉は尊敬していますです。\nhttps://www.i879.com/birth/flower/06/15/",
     );
   });
 
@@ -133,12 +132,14 @@ describe("generateDailyGreetingMessage", () => {
     const requestBody = JSON.parse(String(requestInit?.body));
     expect(requestBody.contents[0].parts[0].text).toContain("今日の大切な予定: 千夏子の誕生日");
     expect(requestBody.contents[0].parts[0].text).toContain(
-      "誕生花、花言葉、天気、季節の話題よりも優先して本文の中心",
+      "天気や季節の話題よりも優先して本文の中心",
     );
     expect(requestBody.contents[0].parts[0].text).toContain("人名と思われる名前には「さん」");
     expect(requestBody.contents[0].parts[0].text).toContain("今日は千夏子さんのお誕生日ですね。");
     expect(requestBody.contents[0].parts[0].text).toContain("80文字〜130文字");
-    expect(result.text).toBe("お早うございます。\n今日は6月7日、千夏子さんのお誕生日ですね。よい一日になりますように。");
+    expect(result.text).toBe(
+      "お早うございます。\n今日は6月7日、千夏子さんのお誕生日ですね。よい一日になりますように。\n\n今日の誕生花は宿根アマ、花言葉はご親切にありがとうです。\nhttps://www.i879.com/birth/flower/06/07/",
+    );
   });
 
   it("passes recent opening keywords to avoid short-term repetition", async () => {
@@ -195,7 +196,9 @@ describe("generateDailyGreetingMessage", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result.text).toBe("お早うございます。\n今日は6月7日、そろそろ梅雨入りが気になる頃ですね。水分をとってください。");
+    expect(result.text).toBe(
+      "お早うございます。\n今日は6月7日、そろそろ梅雨入りが気になる頃ですね。水分をとってください。\n\n今日の誕生花は宿根アマ、花言葉はご親切にありがとうです。\nhttps://www.i879.com/birth/flower/06/07/",
+    );
   });
 
   it("passes keywords extracted from recent openings as banned opening keywords", async () => {
@@ -252,7 +255,9 @@ describe("generateDailyGreetingMessage", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result.text).toBe("お早うございます。\n今日は6月11日、もうすぐ夏至で日が長くなる頃ですね。水分をとってください。");
+    expect(result.text).toBe(
+      "お早うございます。\n今日は6月11日、もうすぐ夏至で日が長くなる頃ですね。水分をとってください。\n\n今日の誕生花はライラック、花言葉は初恋の感動です。\nhttps://www.i879.com/birth/flower/06/11/",
+    );
   });
 
   it("falls back to Gemini 2.5 Flash when the primary Gemini model is temporarily unavailable", async () => {
@@ -299,7 +304,9 @@ describe("generateDailyGreetingMessage", () => {
       temperature: 0.8,
       thinkingConfig: { thinkingBudget: 0 },
     });
-    expect(result.text).toBe("お早うございます。\n今日は6月7日、穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
+    expect(result.text).toBe(
+      "お早うございます。\n今日は6月7日、穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。\n\n今日の誕生花は宿根アマ、花言葉はご親切にありがとうです。\nhttps://www.i879.com/birth/flower/06/07/",
+    );
   });
 
   it("keeps the Gemini API summary when every model is temporarily unavailable", async () => {
@@ -369,7 +376,9 @@ describe("generateDailyGreetingMessage", () => {
       weatherInfo: TEST_WEATHER_INFO,
     });
 
-    expect(result.text).toBe("お早うございます。\n今日は6月7日、穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。");
+    expect(result.text).toBe(
+      "お早うございます。\n今日は6月7日、穏やかな季節の一日です。\nどうぞ無理なくお過ごしください。\n\n今日の誕生花は宿根アマ、花言葉はご親切にありがとうです。\nhttps://www.i879.com/birth/flower/06/07/",
+    );
   });
 
   it("rejects an incomplete MAX_TOKENS response with a display summary", async () => {

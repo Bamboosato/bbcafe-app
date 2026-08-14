@@ -1,4 +1,4 @@
-import { getBirthFlowerForDate, type BirthFlower } from "./birthFlowers";
+import { formatMonthDayKey, getBirthFlowerForDate, getBirthFlowerSourceUrl, type BirthFlower } from "./birthFlowers";
 import { getNagoyaWeatherInfo } from "./weather";
 
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
@@ -116,7 +116,6 @@ export async function generateDailyGreetingMessage({
   for (let contentAttempt = 0; contentAttempt < contentMaxAttempts; contentAttempt += 1) {
     const prompt = buildDailyGreetingPrompt({
       ...greetingContext,
-      birthFlower,
       calendarEventInfo,
       location,
       recentOpeningKeywords,
@@ -174,7 +173,7 @@ export async function generateDailyGreetingMessage({
     if (!conflict) {
       return {
         location,
-        text,
+        text: appendDailyGreetingBirthFlower(text, birthFlower, today),
       };
     }
 
@@ -189,7 +188,7 @@ export async function generateDailyGreetingMessage({
 
   return {
     location,
-    text: lastRepeatedText ?? "",
+    text: appendDailyGreetingBirthFlower(lastRepeatedText ?? "", birthFlower, today),
   };
 }
 
@@ -470,7 +469,6 @@ function toBigramCounts(value: string) {
 }
 
 function buildDailyGreetingPrompt({
-  birthFlower,
   calendarEventInfo,
   dateInfo,
   location,
@@ -478,7 +476,6 @@ function buildDailyGreetingPrompt({
   timeOfDayGreeting,
   weatherInfo,
 }: {
-  birthFlower: BirthFlower | null;
   calendarEventInfo?: string;
   dateInfo: string;
   location: string;
@@ -489,9 +486,6 @@ function buildDailyGreetingPrompt({
   const normalizedCalendarEventInfo = calendarEventInfo?.trim();
   const calendarEventInfoLine = normalizedCalendarEventInfo
     ? `・今日の大切な予定: ${normalizedCalendarEventInfo}\n`
-    : "";
-  const birthFlowerInfoLine = birthFlower
-    ? `・今日の誕生花: ${birthFlower.flower}\n・誕生花の花言葉: ${birthFlower.language}\n`
     : "";
   const characterCountRule = normalizedCalendarEventInfo ? "80文字〜130文字" : "60文字〜95文字";
   const recentOpeningKeywordsText = recentOpeningKeywords.map((keyword) => `・${keyword}`).join("\n");
@@ -505,26 +499,39 @@ function buildDailyGreetingPrompt({
 
 【今日の情報】
 ・日付: ${dateInfo}
-${calendarEventInfoLine}${birthFlowerInfoLine}・天気予報: ${weatherInfo}
+${calendarEventInfoLine}・天気予報: ${weatherInfo}
 ${recentOpeningKeywordsSection}
 
 【お年寄り向けの絶対ルール】
 1. 本文の冒頭は必ず「${timeOfDayGreeting}」にしてください。
 2. 冒頭の挨拶の直後に、必ず「今日は${dateInfo}、」を入れてください。
 3. 「今日は${dateInfo}、」に続けて、指定された日付の時期に合う季節の言葉を1つだけ、わかりやすく含めてください。
-4. 上の【最近使った禁止キーワード】に列挙された語は、冒頭の季節の一言には使わないでください。ただし、誕生花の定型文や天気予報の説明に必要な場合は使ってかまいません。
-5. 今日の大切な予定がある場合は、誕生花、花言葉、天気、季節の話題よりも優先して本文の中心にしてください。
-6. 今日の大切な予定は、自然な日本語に整えてください。人名と思われる名前には「さん」を付けてください。
+4. 誕生花、花言葉、参照URLは本文に出力しないでください。生成後にシステム側で本文の末尾へ追加します。
+5. 上の【最近使った禁止キーワード】に列挙された語は、冒頭の季節の一言には使わないでください。ただし、天気予報の説明に必要な場合は使ってかまいません。
+6. 今日の大切な予定がある場合は、天気や季節の話題よりも優先して本文の中心にしてください。
+7. 今日の大切な予定は、自然な日本語に整えてください。人名と思われる名前には「さん」を付けてください。
    例: 「千夏子の誕生日」→「今日は千夏子さんのお誕生日ですね。」
    例: 「岳夫と由美子の結婚記念日」→「今日は岳夫さんと由美子さんの結婚記念日ですね。」
-7. 【今日の情報】の「今日の誕生花」と「誕生花の花言葉」を必ずそのまま使い、別の花や別の花言葉に置き換えないでください。
-8. 誕生花は必ず「今日の誕生花は○○○、花言葉は△△△△△です。」という形で本文に入れてください。
-9. お年寄りが「ああ、もうそんな季節か」と感じられる、雑学的でやさしい表現にしてください。
-10. 文字数は「${characterCountRule}」の範囲内に収めてください。
-11. 漢字を多くせず、ひらがなを多めにして、専門用語は使わないでください。
-12. 天気予報や注意情報に基づき、具体的な行動アドバイスを必ず最後に入れてください。
-13. 解説や前置きは不要です。LINEの本文のみを出力してください。
+8. お年寄りが「ああ、もうそんな季節か」と感じられる、雑学的でやさしい表現にしてください。
+9. 文字数は「${characterCountRule}」の範囲内に収めてください。
+10. 漢字を多くせず、ひらがなを多めにして、専門用語は使わないでください。
+11. 天気予報や注意情報に基づき、具体的な行動アドバイスを必ず最後に入れてください。
+12. 解説や前置きは不要です。LINEの本文のみを出力してください。
 `.trim();
+}
+
+function appendDailyGreetingBirthFlower(text: string, birthFlower: BirthFlower | null, today: Date) {
+  if (!birthFlower) {
+    return text;
+  }
+
+  const sourceUrl = getBirthFlowerSourceUrl(formatMonthDayKey(today, DAILY_GREETING_TIME_ZONE));
+
+  if (!sourceUrl) {
+    return text;
+  }
+
+  return `${text}\n\n今日の誕生花は${birthFlower.flower}、花言葉は${birthFlower.language}です。\n${sourceUrl}`;
 }
 
 async function buildDailyGreetingContext({ today, weatherInfo }: { today: Date; weatherInfo?: string }) {
