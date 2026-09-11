@@ -535,7 +535,7 @@ function appendDailyGreetingBirthFlower(text: string, birthFlower: BirthFlower |
 }
 
 async function buildDailyGreetingContext({ today, weatherInfo }: { today: Date; weatherInfo?: string }) {
-  const baseWeatherInfo = weatherInfo ?? (await getNagoyaWeatherInfo());
+  const baseWeatherInfo = weatherInfo ?? (await getNagoyaWeatherInfo(today));
 
   return {
     dateInfo: formatMonthDayInJapan(today),
