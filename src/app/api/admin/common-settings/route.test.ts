@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hasChannelIdChanged, isCredentialConfigured } from "./route";
+import { hasChannelIdChanged, isCredentialConfigured, toCommonSettingsView } from "./route";
 
 describe("common settings credential display state", () => {
   afterEach(() => {
@@ -34,5 +34,29 @@ describe("common settings channel ID change detection", () => {
 
   it("detects a different channel ID", () => {
     expect(hasChannelIdChanged("2010193672", "2000000000")).toBe(true);
+  });
+});
+
+describe("common settings external care signal state", () => {
+  it("exposes the persisted daily care setting to the management screen", () => {
+    expect(
+      toCommonSettingsView(
+        {
+          accessTokenValidatedAt: null,
+          channelAccessTokenRef: "LINE_CHANNEL_ACCESS_TOKEN",
+          channelId: "channel-id",
+          channelSecretRef: "LINE_CHANNEL_SECRET",
+          credentialProvider: "env",
+          displayName: "BB Cafe",
+          lineAccountId: "account-a",
+          retentionDays: 90,
+          webhookVerifiedAt: null,
+        },
+        { externalCareSignalsEnabled: true, historyRetentionDays: 180 },
+      ),
+    ).toMatchObject({
+      externalCareSignalsEnabled: true,
+      sentRetentionDays: 180,
+    });
   });
 });

@@ -1339,6 +1339,7 @@ export default function ViewerApp({
       return;
     }
 
+    const previousSettings = commonSettings;
     setSavingCommonSettings(true);
     setError("");
 
@@ -1348,6 +1349,7 @@ export default function ViewerApp({
           channelAccessToken: commonSettingsChannelAccessToken.trim() || undefined,
           channelId: commonSettings.channelId,
           channelSecret: commonSettingsChannelSecret.trim() || undefined,
+          externalCareSignalsEnabled: commonSettings.externalCareSignalsEnabled,
           receivedRetentionDays: commonSettings.receivedRetentionDays,
           sentRetentionDays: commonSettings.sentRetentionDays,
         }),
@@ -1358,6 +1360,7 @@ export default function ViewerApp({
       });
 
       if (result.error || !result.data?.settings) {
+        setCommonSettings(previousSettings);
         setError(result.error?.message ?? "共通設定を更新できません。");
         return;
       }
@@ -2071,6 +2074,30 @@ function CommonSettingsScreen({
                 value={settings.sentRetentionDays}
               />
             </label>
+            <div className="full settings-external-toggle">
+              <label className="notification-toggle">
+                <span className="notification-toggle-copy">
+                  <span className="notification-toggle-title">外部情報を利用</span>
+                  <span className="notification-toggle-state">
+                    {settings.externalCareSignalsEnabled ? "オン" : "オフ"}
+                  </span>
+                </span>
+                <span className="toggle-switch">
+                  <input
+                    aria-label="外部情報を利用"
+                    checked={settings.externalCareSignalsEnabled}
+                    disabled={saving}
+                    onChange={(event) => onChange("externalCareSignalsEnabled", event.target.checked)}
+                    role="switch"
+                    type="checkbox"
+                  />
+                  <span className="toggle-slider" />
+                </span>
+              </label>
+              <p className="status-text">
+                公式WBGTアラート、気象庁の警報・注意報、感染症週報を手動作成と自動送信に反映します。
+              </p>
+            </div>
             <details className="full settings-disclosure">
               <summary>LINE連携情報</summary>
               <div className="line-settings-grid">

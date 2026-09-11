@@ -277,10 +277,12 @@ export async function getDailyBroadcastSettings(lineAccountId: string): Promise<
 
 export async function updateDailyBroadcastSettings({
   enabled,
+  externalCareSignalsEnabled,
   historyRetentionDays,
   lineAccountId,
 }: {
   enabled?: boolean;
+  externalCareSignalsEnabled?: boolean;
   historyRetentionDays?: number;
   lineAccountId: string;
 }) {
@@ -292,6 +294,10 @@ export async function updateDailyBroadcastSettings({
   await automationSettingsRef(lineAccountId).set(
     {
       enabled: typeof enabled === "boolean" ? enabled : current.enabled,
+      externalCareSignalsEnabled:
+        typeof externalCareSignalsEnabled === "boolean"
+          ? externalCareSignalsEnabled
+          : current.externalCareSignalsEnabled,
       historyRetentionDays: nextHistoryRetentionDays,
       lineAccountId,
       scheduleMode: "fixed_deploy",
@@ -547,6 +553,7 @@ function sendRunsCollection(lineAccountId: string) {
 function defaultDailyBroadcastSettings(lineAccountId: string): AutomationSettingsView {
   return {
     enabled: false,
+    externalCareSignalsEnabled: false,
     historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS,
     lineAccountId,
     scheduleMode: "fixed_deploy",
@@ -596,6 +603,7 @@ function toDailyBroadcastSettings(
 ): AutomationSettingsView {
   return {
     enabled: Boolean(data.enabled),
+    externalCareSignalsEnabled: data.externalCareSignalsEnabled === true,
     historyRetentionDays: normalizeHistoryRetentionDays(Number(data.historyRetentionDays ?? DEFAULT_HISTORY_RETENTION_DAYS)),
     lineAccountId,
     scheduleMode: "fixed_deploy",

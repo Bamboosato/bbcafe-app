@@ -3,6 +3,9 @@ import { getNagoyaWeatherContext, getNagoyaWeatherInfo } from "./weather";
 
 const JMA_FORECAST_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/230000.json";
 const WBGT_FORECAST_URL = "https://www.wbgt.env.go.jp/prev15WG/dl/yohou_51106.csv";
+const JMA_WARNING_URL = "https://www.jma.go.jp/bosai/warning/data/warning/230000.json";
+const WBGT_ALERT_URL = "https://www.wbgt.env.go.jp/alert/dl/2026/alert_20260607_05.csv";
+const JIHS_INDEX_URL = "https://id-info.jihs.go.jp/surveillance/idwr/index.html";
 const TODAY = new Date("2026-06-06T15:00:00Z");
 const TEST_WBGT_CSV = [
   ",,2026060703,2026060706,2026060709,2026060712,2026060715,2026060718,2026060721,2026060724,2026060803",
@@ -42,6 +45,10 @@ describe("getNagoyaWeatherContext", () => {
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
       expect.arrayContaining([JMA_FORECAST_URL, WBGT_FORECAST_URL]),
     );
+    const requestedUrls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(requestedUrls).not.toContain(JMA_WARNING_URL);
+    expect(requestedUrls).not.toContain(WBGT_ALERT_URL);
+    expect(requestedUrls).not.toContain(JIHS_INDEX_URL);
   });
 
   it("uses today's weekly maximum when the short-range temperature series is unavailable", async () => {
@@ -95,6 +102,16 @@ describe("getNagoyaWeatherContext", () => {
       maxTemperature: 28,
       wbgtMax: null,
     });
+  });
+
+  it("requests external care signals only when the persisted setting is enabled", async () => {
+    const fetchMock = mockForecastFetch(createJmaResponse());
+
+    await getNagoyaWeatherContext(TODAY, { externalCareSignalsEnabled: true });
+
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
+      expect.arrayContaining([JMA_WARNING_URL, WBGT_ALERT_URL, JIHS_INDEX_URL]),
+    );
   });
 
   it("falls back when the JMA request fails", async () => {

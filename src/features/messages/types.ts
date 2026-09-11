@@ -18,6 +18,7 @@ export type CommonSettingsView = {
   channelId: string;
   channelSecretConfigured: boolean;
   displayName: string;
+  externalCareSignalsEnabled: boolean;
   lineAccountId: string;
   receivedRetentionDays: number;
   sentRetentionDays: number;
@@ -50,6 +51,7 @@ export type CalendarEventView = {
 
 export type AutomationSettingsView = {
   enabled: boolean;
+  externalCareSignalsEnabled: boolean;
   historyRetentionDays: number;
   lineAccountId: string;
   scheduleMode: "fixed_deploy";
