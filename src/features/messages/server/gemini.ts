@@ -1,5 +1,9 @@
 import { formatMonthDayKey, getBirthFlowerForDate, getBirthFlowerSourceUrl, type BirthFlower } from "./birthFlowers";
-import { buildDailyCareNotices } from "./dailyCare";
+import {
+  buildDailyCareNotices,
+  buildInfectionNoticeKey,
+  type DailyCareInfectionNoticeState,
+} from "./dailyCare";
 import { getNagoyaWeatherContext, type NagoyaWeatherContext } from "./weather";
 
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
@@ -88,10 +92,12 @@ export async function generateDailyGreetingMessage({
   recentOpeningExamples = [],
   today = new Date(),
   externalCareSignalsEnabled = false,
+  infectionNoticeState,
   weatherInfo,
 }: {
   calendarEventInfo?: string;
   externalCareSignalsEnabled?: boolean;
+  infectionNoticeState?: DailyCareInfectionNoticeState | null;
   location?: string;
   recentOpeningExamples?: string[];
   today?: Date;
@@ -108,7 +114,12 @@ export async function generateDailyGreetingMessage({
 
   const models = getGeminiModelCandidates();
   const timeOfDayGreeting = getTimeOfDayGreeting(today);
-  const greetingContext = await buildDailyGreetingContext({ today, weatherInfo, externalCareSignalsEnabled });
+  const greetingContext = await buildDailyGreetingContext({
+    externalCareSignalsEnabled,
+    infectionNoticeState,
+    today,
+    weatherInfo,
+  });
   const birthFlower = getBirthFlowerForDate(today, DAILY_GREETING_TIME_ZONE);
   const contentMaxAttempts = recentOpeningExamples.length > 0 ? DAILY_GREETING_CONTENT_MAX_ATTEMPTS : 1;
   let recentOpeningKeywords = buildRecentGreetingOpeningKeywords(recentOpeningExamples);
@@ -173,6 +184,9 @@ export async function generateDailyGreetingMessage({
 
     if (!conflict) {
       return {
+        ...(greetingContext.infectionNoticeKey
+          ? { infectionNoticeKey: greetingContext.infectionNoticeKey }
+          : {}),
         location,
         text: appendDailyGreetingBirthFlower(text, birthFlower, today),
       };
@@ -188,6 +202,9 @@ export async function generateDailyGreetingMessage({
   }
 
   return {
+    ...(greetingContext.infectionNoticeKey
+      ? { infectionNoticeKey: greetingContext.infectionNoticeKey }
+      : {}),
     location,
     text: appendDailyGreetingBirthFlower(lastRepeatedText ?? "", birthFlower, today),
   };
@@ -539,25 +556,33 @@ async function buildDailyGreetingContext({
   today,
   weatherInfo,
   externalCareSignalsEnabled,
+  infectionNoticeState,
 }: {
   today: Date;
   externalCareSignalsEnabled?: boolean;
+  infectionNoticeState?: DailyCareInfectionNoticeState | null;
   weatherInfo?: string;
 }) {
   const weatherContext = weatherInfo
     ? undefined
     : await getNagoyaWeatherContext(today, { externalCareSignalsEnabled });
   const baseWeatherInfo = weatherInfo ?? weatherContext?.weatherInfo ?? "";
+  const notices = weatherContext
+    ? buildDailyCareNotices(weatherContext, today, { infectionNoticeState })
+    : [];
+  const infectionNoticeKey =
+    notices.some((notice) => notice.type === "infection") && weatherContext?.infectionTrend
+      ? buildInfectionNoticeKey(weatherContext.infectionTrend)
+      : undefined;
 
   return {
     dateInfo: formatMonthDayInJapan(today),
-    weatherInfo: appendSeasonalCareInfo(baseWeatherInfo, today, weatherContext),
+    infectionNoticeKey,
+    weatherInfo: appendSeasonalCareInfo(baseWeatherInfo, notices),
   };
 }
 
-function appendSeasonalCareInfo(weatherInfo: string, today: Date, weatherContext?: NagoyaWeatherContext) {
-  const notices = weatherContext ? buildDailyCareNotices(weatherContext, today) : [];
-
+function appendSeasonalCareInfo(weatherInfo: string, notices: ReturnType<typeof buildDailyCareNotices>) {
   if (notices.length > 0) {
     return `${weatherInfo} ${notices.map((notice) => notice.text).join(" ")}`;
   }

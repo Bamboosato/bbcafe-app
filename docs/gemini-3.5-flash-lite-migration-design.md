@@ -131,6 +131,9 @@ generateDailyGreetingMessage
 - 感染症は最新週・前週・前々週がそろい、定点当たり報告数が2週連続で増加した場合だけ「増加傾向」とする。公表から14日を超えたデータ、地域欠落、数値不正時は注意情報を出さない。
 - インフルエンザの従来の警報・注意報基準値を自動判定に使わない。定点医療機関の変更により公式の警報・注意報システムが停止しているため、数値だけで「流行中」と断定しない。
 - 感染症注意情報は、インフルエンザとCOVID-19が同時に該当しても1件にまとめる。手洗い、体調不良時に無理をしない等の一般的な行動に限定し、診断・治療・服薬の案内はしない。
+- 感染症週報の同一性は、情報元URL、報告週、公表日時、対象感染症を連結したキーで判定する。公表日時が変わった修正版や対象感染症の変化は新しい注意情報として扱う。
+- 同じ週報は、前回のLINE送信から3日未満であれば抑制し、3日経過後は再表示を許可する。表示履歴はLINEアカウント単位で保存し、手動送信とCronで共有する。
+- 手動作成のプレビューでは表示履歴を更新せず、手動送信またはCronで少なくとも1件のLINE送信が成功した時点で`lastDisplayedAt`を更新する。
 - 環境省の熱中症警戒・特別警戒アラートは、WBGT数値より優先する。気象庁の雷、大雨、強風、大雪、風雪等の注意報は、天気文字列による推測より優先する。
 - 特別警報・警報はモデルによる自由な言い換えに依存せず、公式種別を構造化する。通常の挨拶文へ追加する注意報と、将来の緊急通知で扱う警報以上を区別する。
 - 外部情報は`Promise.allSettled`相当で個別に取得し、感染症・WBGTアラート・警報のいずれかの障害で天気メッセージ全体を失敗させない。注意情報は既存どおり最大2件とする。
@@ -175,13 +178,16 @@ generateDailyGreetingMessage
 | E-008 | 正常系・状態遷移 | 管理画面で外部情報をOFF→ON→OFF | 同じアカウントの手動生成とCronが設定状態に応じて外部情報の取得を切り替えることを確認する |
 | E-009 | 境界値・データ | 既存の設定ドキュメントに項目がない | 旧データを読み込んだ場合に外部情報を誤って有効化しないことを確認する |
 | E-010 | 異常系・状態遷移 | 手動生成時の設定取得失敗 | 設定をOFF扱いにして、外部情報なしの生成を継続することを確認する |
+| E-011 | 正常系・データ | 情報元URL・報告週・公表日時・対象感染症 | 同じ週報のキーが同じ値になり、対象感染症や公表日時の変化が別キーになることを確認する |
+| E-012 | 境界値・状態遷移 | 同じ週報を送信後0〜2日、3日 | 3日未満は抑制し、3日経過時は再表示することを確認する |
+| E-013 | 正常系・状態遷移 | 手動プレビュー、手動送信、Cron送信 | プレビューでは履歴を更新せず、送信成功時だけ手動・Cron共通の履歴を更新することを確認する |
 
 ## 7. 実行範囲と証跡
 
 ### 実装時に必須
 
-- `src/features/messages/server/gemini.test.ts`、`src/features/messages/server/weather.test.ts`、`src/features/messages/server/dailyCare.test.ts`、`src/features/messages/server/externalCareSignals.test.ts`の対象テストを更新・追加する。
-- `npm run test -- src/features/messages/server/gemini.test.ts src/features/messages/server/weather.test.ts src/features/messages/server/dailyCare.test.ts src/features/messages/server/externalCareSignals.test.ts`相当の対象単体テストを実行する。
+- `src/features/messages/server/gemini.test.ts`、`src/features/messages/server/weather.test.ts`、`src/features/messages/server/dailyCare.test.ts`、`src/features/messages/server/externalCareSignals.test.ts`、`src/app/api/message-assistant/send/route.test.ts`の対象テストを更新・追加する。
+- `npm run test -- src/features/messages/server/gemini.test.ts src/features/messages/server/weather.test.ts src/features/messages/server/dailyCare.test.ts src/features/messages/server/externalCareSignals.test.ts src/app/api/message-assistant/send/route.test.ts`相当の対象単体テストを実行する。
 - `npm run typecheck`、`npm run lint`、`npm run build`を実行する。
 - `fetch`の呼出し順、URL、リクエストボディのモデル別設定をテスト失敗時の証跡として残す。
 

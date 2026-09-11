@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRequestedUserIds, resolveManualSendUsers } from "./route";
+import { parseInfectionNoticeKey, parseRequestedUserIds, resolveManualSendUsers } from "./route";
 import type { UserInfoView } from "@/features/messages/types";
 
 describe("manual message recipient selection", () => {
@@ -21,6 +21,19 @@ describe("manual message recipient selection", () => {
     const users = [user("U1", "Takeo Sato"), user("U2", "佐藤由美子")];
 
     expect(resolveManualSendUsers(users, ["U2", "U3"])).toEqual([users[1]]);
+  });
+});
+
+describe("infection notice display state input", () => {
+  it("trims a generated notice key before recording it", () => {
+    expect(parseInfectionNoticeKey("  source|2026年第35週|published|influenza  ")).toBe(
+      "source|2026年第35週|published|influenza",
+    );
+  });
+
+  it("ignores missing or oversized notice keys", () => {
+    expect(parseInfectionNoticeKey(undefined)).toBeUndefined();
+    expect(parseInfectionNoticeKey("x".repeat(1001))).toBeUndefined();
   });
 });
 

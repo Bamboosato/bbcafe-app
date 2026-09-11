@@ -22,6 +22,7 @@ import {
   parseHistoryCursor,
 } from "./historyPagination";
 import { listUserInfos } from "./messages";
+import type { DailyCareInfectionNoticeState } from "./dailyCare";
 
 export const DAILY_BROADCAST_SETTINGS_ID = "dailyBroadcast";
 export const DEFAULT_HISTORY_RETENTION_DAYS = 180;
@@ -273,6 +274,49 @@ export async function getDailyBroadcastSettings(lineAccountId: string): Promise<
   }
 
   return toDailyBroadcastSettings(lineAccountId, snapshot.data() ?? {});
+}
+
+export async function getInfectionNoticeDisplayState(
+  lineAccountId: string,
+): Promise<DailyCareInfectionNoticeState | null> {
+  const snapshot = await automationSettingsRef(lineAccountId).get();
+
+  if (!snapshot.exists) {
+    return null;
+  }
+
+  const data = snapshot.data() ?? {};
+  const key = typeof data.infectionNoticeKey === "string" ? data.infectionNoticeKey.trim() : "";
+
+  return key
+    ? {
+        key,
+        lastDisplayedAt: toIsoString(data.infectionNoticeDisplayedAt),
+      }
+    : null;
+}
+
+export async function recordInfectionNoticeDisplayed({
+  displayedAt = new Date(),
+  key,
+  lineAccountId,
+}: {
+  displayedAt?: Date;
+  key: string;
+  lineAccountId: string;
+}) {
+  const normalizedKey = key.trim();
+  if (!normalizedKey) {
+    return;
+  }
+
+  await automationSettingsRef(lineAccountId).set(
+    {
+      infectionNoticeDisplayedAt: Timestamp.fromDate(displayedAt),
+      infectionNoticeKey: normalizedKey,
+    },
+    { merge: true },
+  );
 }
 
 export async function updateDailyBroadcastSettings({

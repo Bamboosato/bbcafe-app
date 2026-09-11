@@ -14,6 +14,11 @@ export type DailyCareInfectionTrend = {
   sourceUrl: string;
 };
 
+export type DailyCareInfectionNoticeState = {
+  key: string;
+  lastDisplayedAt: null | string;
+};
+
 export type DailyCareWeatherSignals = {
   weatherText?: string | null;
   weatherCode?: string | null;
@@ -34,10 +39,12 @@ export type DailyCareNotice = {
 };
 
 const MAX_DAILY_CARE_NOTICES = 2;
+export const INFECTION_NOTICE_REPEAT_INTERVAL_DAYS = 3;
 
 export function buildDailyCareNotices(
   signals: DailyCareWeatherSignals,
   today: Date,
+  { infectionNoticeState }: { infectionNoticeState?: DailyCareInfectionNoticeState | null } = {},
 ): DailyCareNotice[] {
   const notices: DailyCareNotice[] = [];
   const weatherText = signals.weatherText ?? "";
@@ -52,7 +59,10 @@ export function buildDailyCareNotices(
     notices.push(heatNotice);
   }
 
-  if (signals.infectionTrend) {
+  if (
+    signals.infectionTrend &&
+    shouldIncludeInfectionNotice(signals.infectionTrend, today, infectionNoticeState)
+  ) {
     notices.push(buildInfectionNotice(signals.infectionTrend));
   }
 
@@ -83,6 +93,36 @@ export function buildDailyCareNotices(
   }
 
   return notices.sort((left, right) => right.priority - left.priority).slice(0, MAX_DAILY_CARE_NOTICES);
+}
+
+export function buildInfectionNoticeKey(trend: DailyCareInfectionTrend) {
+  return [
+    trend.sourceUrl.trim(),
+    trend.reportingWeek.trim(),
+    trend.publishedAt.trim(),
+    [...trend.diseases].sort().join(","),
+  ].join("|");
+}
+
+export function shouldIncludeInfectionNotice(
+  trend: DailyCareInfectionTrend,
+  today: Date,
+  state: DailyCareInfectionNoticeState | null | undefined,
+) {
+  if (!state || state.key !== buildInfectionNoticeKey(trend)) {
+    return true;
+  }
+
+  if (!state.lastDisplayedAt) {
+    return true;
+  }
+
+  const lastDisplayedDate = new Date(state.lastDisplayedAt);
+  if (Number.isNaN(lastDisplayedDate.getTime())) {
+    return true;
+  }
+
+  return getDateDifferenceInJapan(today, lastDisplayedDate) >= INFECTION_NOTICE_REPEAT_INTERVAL_DAYS;
 }
 
 function buildHeatNotice(signals: DailyCareWeatherSignals, today: Date): DailyCareNotice | null {
@@ -200,4 +240,13 @@ function getDatePartsInTimeZone(date: Date) {
   const year = Number(parts.find((part) => part.type === "year")?.value);
 
   return { day, month, year };
+}
+
+function getDateDifferenceInJapan(later: Date, earlier: Date) {
+  const laterDate = getDatePartsInTimeZone(later);
+  const earlierDate = getDatePartsInTimeZone(earlier);
+  const laterUtc = Date.UTC(laterDate.year, laterDate.month - 1, laterDate.day);
+  const earlierUtc = Date.UTC(earlierDate.year, earlierDate.month - 1, earlierDate.day);
+
+  return Math.floor((laterUtc - earlierUtc) / 86_400_000);
 }

@@ -10,8 +10,10 @@ import {
 } from "@/features/messages/server/calendarEvents";
 import {
   getDailyBroadcastSettings,
+  getInfectionNoticeDisplayState,
   listSendRuns,
 } from "@/features/messages/server/broadcasts";
+import type { DailyCareInfectionNoticeState } from "@/features/messages/server/dailyCare";
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireViewerSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
@@ -32,11 +34,15 @@ export async function POST(request: Request) {
     const todayCalendarEventText = buildCalendarEventsSummary(todayCalendarEvents);
     const recentSendRuns = await listSendRuns(auth.payload.lineAccountId, 20);
     let externalCareSignalsEnabled = false;
+    let infectionNoticeState: DailyCareInfectionNoticeState | null = null;
 
     try {
-      externalCareSignalsEnabled = (
-        await getDailyBroadcastSettings(auth.payload.lineAccountId)
-      ).externalCareSignalsEnabled;
+      const settings = await getDailyBroadcastSettings(auth.payload.lineAccountId);
+      externalCareSignalsEnabled = settings.externalCareSignalsEnabled;
+
+      if (externalCareSignalsEnabled) {
+        infectionNoticeState = await getInfectionNoticeDisplayState(auth.payload.lineAccountId);
+      }
     } catch (settingsError) {
       console.error("[message-assistant-generate] daily care settings unavailable", {
         message: settingsError instanceof Error ? settingsError.message : String(settingsError),
@@ -44,14 +50,23 @@ export async function POST(request: Request) {
       });
     }
 
-    const { location, text } = await generateDailyGreetingMessage({
+    const { infectionNoticeKey, location, text } = await generateDailyGreetingMessage({
       calendarEventInfo: todayCalendarEventText,
       externalCareSignalsEnabled,
+      infectionNoticeState,
       recentOpeningExamples: buildRecentGreetingOpeningExamples(recentSendRuns, today),
       today,
     });
 
-    return jsonData({ location, message: text, todayCalendarEventText }, requestId);
+    return jsonData(
+      {
+        ...(infectionNoticeKey ? { infectionNoticeKey } : {}),
+        location,
+        message: text,
+        todayCalendarEventText,
+      },
+      requestId,
+    );
   } catch (error) {
     const summary = summarizeDailyGreetingGenerationError(error);
 
