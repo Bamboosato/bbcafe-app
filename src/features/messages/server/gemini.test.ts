@@ -65,7 +65,6 @@ describe("generateDailyGreetingMessage", () => {
     expect(requestBody.contents[0].parts[0].text).toContain("日付: 6月7日");
     expect(requestBody.contents[0].parts[0].text).toContain("必ず「今日は6月7日、」");
     expect(requestBody.contents[0].parts[0].text).toContain(`天気予報: ${TEST_WEATHER_INFO}`);
-    expect(requestBody.contents[0].parts[0].text).toContain("【熱中症警戒】");
     expect(requestBody.contents[0].parts[0].text).toContain("季節の言葉");
     expect(requestBody.contents[0].parts[0].text).toContain("今日の大切な予定がある場合");
     expect(requestBody.contents[0].parts[0].text).toContain("誕生花、花言葉、参照URLは本文に出力しない");

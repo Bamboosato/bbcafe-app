@@ -1,5 +1,6 @@
 import { formatMonthDayKey, getBirthFlowerForDate, getBirthFlowerSourceUrl, type BirthFlower } from "./birthFlowers";
-import { getNagoyaWeatherInfo } from "./weather";
+import { buildDailyCareNotices } from "./dailyCare";
+import { getNagoyaWeatherContext, type NagoyaWeatherContext } from "./weather";
 
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 const DEFAULT_GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash"];
@@ -11,8 +12,6 @@ const DAILY_GREETING_TIME_ZONE = "Asia/Tokyo";
 const GEMINI_TRANSIENT_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
 const TIME_OF_DAY_GREETINGS = ["お早うございます。", "こんにちは。", "こんばんは。"] as const;
 const UNKNOWN_GENERATION_ERROR_SUMMARY = "メッセージ生成APIで不明なエラーが発生しました。";
-const HEATSTROKE_ALERT_INFO =
-  "【熱中症警戒】非常に暑くなる季節です。必ずエアコン使用と水分補給を促してください。";
 const DAILY_GREETING_REGENERATION_MAX_ATTEMPTS = 0;
 const DAILY_GREETING_CONTENT_MAX_ATTEMPTS = 1 + DAILY_GREETING_REGENERATION_MAX_ATTEMPTS;
 const RECENT_OPENING_BANNED_KEYWORD_MAX_EXAMPLES = 20;
@@ -535,19 +534,20 @@ function appendDailyGreetingBirthFlower(text: string, birthFlower: BirthFlower |
 }
 
 async function buildDailyGreetingContext({ today, weatherInfo }: { today: Date; weatherInfo?: string }) {
-  const baseWeatherInfo = weatherInfo ?? (await getNagoyaWeatherInfo(today));
+  const weatherContext = weatherInfo ? undefined : await getNagoyaWeatherContext(today);
+  const baseWeatherInfo = weatherInfo ?? weatherContext?.weatherInfo ?? "";
 
   return {
     dateInfo: formatMonthDayInJapan(today),
-    weatherInfo: appendSeasonalCareInfo(baseWeatherInfo, today),
+    weatherInfo: appendSeasonalCareInfo(baseWeatherInfo, today, weatherContext),
   };
 }
 
-function appendSeasonalCareInfo(weatherInfo: string, today: Date) {
-  const { month } = getDatePartsInTimeZone(today, DAILY_GREETING_TIME_ZONE);
+function appendSeasonalCareInfo(weatherInfo: string, today: Date, weatherContext?: NagoyaWeatherContext) {
+  const notices = weatherContext ? buildDailyCareNotices(weatherContext, today) : [];
 
-  if (month >= 6 && month <= 9) {
-    return `${weatherInfo} ${HEATSTROKE_ALERT_INFO}`;
+  if (notices.length > 0) {
+    return `${weatherInfo} ${notices.map((notice) => notice.text).join(" ")}`;
   }
 
   return weatherInfo;
