@@ -116,6 +116,14 @@ generateDailyGreetingMessage
 - Cron完了通知と失敗通知の文面・件数が変わらないこと。
 - フォールバックした事実をユーザー本文へ混入させないこと。
 
+### 5.5 日次注意情報
+
+- 天気は文字列を再解釈せず、気象庁の対象日データから天気概要、天気コード、最高・最低気温、降水確率、風情報を構造化して扱う。
+- 暑さ対策は環境省の公式WBGT予測（名古屋地点`51106`）を優先し、対象日と一致する時刻列だけを集計する。WBGTの25、28、31を注意情報の境界として扱い、WBGT取得失敗時も気象庁データによる生成を継続する。
+- 雨・雪・風・凍結リスクを天気概要、降水確率、風情報、最低気温から判定する。雪と最低気温0度以下は凍結のおそれ、雨雪は転倒予防、強い風は外出時の注意として表現する。
+- 注意情報は優先度順に最大2件までプロンプトへ追加する。感染症情報（新型コロナ・インフルエンザ等）は別の公式データ連携が必要なため今回の対象外とし、季節だけで断定的な案内はしない。
+- 手動生成とCronは同じ日付コンテキストを共有し、対象日の取り違えを防ぐ。公式情報の参照元は[環境省の暑さ指数データ提供サービス](https://www.wbgt.env.go.jp/data_service2.php)と[気象庁の防災情報](https://www.jma.go.jp/jma/bosaiinfo/snow_portal.html)とする。
+
 ## 6. テストケース
 
 前提として、APIキーはテスト用の値、天気・Firestore依存はモック、同一テスト内の`fetch`は逐次呼出しとする。外部APIの実呼出しやLINE送信は単体テストで行わない。
@@ -140,13 +148,18 @@ generateDailyGreetingMessage
 | W-002 | 異常系・データ | 今日の短期予報が欠落 | 週間予報の今日の値が有効な場合だけ今日の値を採用することを確認する |
 | W-003 | 境界値 | 今日の値が空欄、明日の値が有効 | 明日の値を誤採用せず、気温フォールバックへ遷移することを確認する |
 | W-004 | 境界値 | JSTの日付境界 | UTC上では前日でもJSTで当日となる生成日時を、当日の予報日として扱うことを確認する |
+| C-001 | 正常系・データ | WBGT 25、28、31の境界 | 公式WBGTの対象日データを摂氏へ変換し、注意情報の境界を正しく適用することを確認する |
+| C-002 | 異常系・状態遷移 | WBGTのタイムアウト、503 | WBGTだけが取得できない場合も、気象庁の天気情報で生成を継続することを確認する |
+| C-003 | 正常系・機能 | 雨・雪・降水確率・風情報 | 当日の天候に応じた転倒予防、強風注意を追加し、月だけでは判定しないことを確認する |
+| C-004 | 境界値・データ | 雪かつ最低気温0度、雨のみ、乾燥した寒日 | 凍結注意の条件を過剰適用せず、雨雪注意と区別することを確認する |
+| C-005 | 状態遷移・UI | 熱中症、雨雪、風が同時成立 | 優先度の高い注意を最大2件に絞り、生成プロンプト末尾の注意情報として安定して渡すことを確認する |
 
 ## 7. 実行範囲と証跡
 
 ### 実装時に必須
 
-- `src/features/messages/server/gemini.test.ts`と`src/features/messages/server/weather.test.ts`の対象テストを更新・追加する。
-- `npm run test -- src/features/messages/server/gemini.test.ts src/features/messages/server/weather.test.ts`相当の対象単体テストを実行する。
+- `src/features/messages/server/gemini.test.ts`、`src/features/messages/server/weather.test.ts`、`src/features/messages/server/dailyCare.test.ts`の対象テストを更新・追加する。
+- `npm run test -- src/features/messages/server/gemini.test.ts src/features/messages/server/weather.test.ts src/features/messages/server/dailyCare.test.ts`相当の対象単体テストを実行する。
 - `npm run typecheck`、`npm run lint`、`npm run build`を実行する。
 - `fetch`の呼出し順、URL、リクエストボディのモデル別設定をテスト失敗時の証跡として残す。
 
@@ -159,7 +172,7 @@ generateDailyGreetingMessage
 
 ### 未実施範囲
 
-- この設計段階ではソースコード、環境変数、デプロイ先の設定を変更しない。
+- 本変更ではGeminiモデル設定、既存の保存・送信フロー、本番環境の環境変数は変更しない。
 - 実際のGemini API品質、料金、レイテンシーはAPIキー・本番相当データ・実行枠が必要なため、設計書作成時点では未検証とする。
 - UIの見た目確認は対象外。ただし既存エラー表示とCron通知の回帰確認は実装後に行う。
 

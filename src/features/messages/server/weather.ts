@@ -1,4 +1,7 @@
+import type { DailyCareWeatherSignals } from "./dailyCare";
+
 const JMA_AICHI_FORECAST_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/230000.json";
+const NAGOYA_WBGT_FORECAST_URL = "https://www.wbgt.env.go.jp/prev15WG/dl/yohou_51106.csv";
 const JMA_FORECAST_TIMEOUT_MS = 10000;
 const JMA_TIME_ZONE = "Asia/Tokyo";
 const NAGOYA_WEATHER_FALLBACK = "名古屋市の今日の気候に合わせた穏やかな日です。";
@@ -11,6 +14,10 @@ type JmaForecastArea = {
   };
   temps?: string[];
   tempsMax?: string[];
+  tempsMin?: string[];
+  pops?: string[];
+  weatherCodes?: string[];
+  winds?: string[];
   weathers?: string[];
 };
 
@@ -25,25 +32,30 @@ type JmaForecastEntry = {
 
 type JmaForecastResponse = JmaForecastEntry[];
 
-export async function getNagoyaWeatherInfo(today = new Date()) {
-  try {
-    const response = await fetchJmaForecast();
+export type NagoyaWeatherContext = DailyCareWeatherSignals & {
+  weatherInfo: string;
+};
 
-    if (!response.ok) {
-      return NAGOYA_WEATHER_FALLBACK;
-    }
+export async function getNagoyaWeatherContext(today = new Date()): Promise<NagoyaWeatherContext> {
+  const [jmaResult, wbgtResult] = await Promise.allSettled([
+    fetchJmaForecastData(),
+    fetchNagoyaWbgtMax(today),
+  ]);
+  const data = jmaResult.status === "fulfilled" ? jmaResult.value : null;
+  const wbgtMax = wbgtResult.status === "fulfilled" ? wbgtResult.value : null;
 
-    const data = (await response.json()) as JmaForecastResponse;
-    const weatherText = extractNagoyaWeather(data);
-
-    if (!weatherText) {
-      return NAGOYA_WEATHER_FALLBACK;
-    }
-
-    return `名古屋市の天気は「${weatherText}」。${extractNagoyaTemperatureText(data, today)}`;
-  } catch {
-    return NAGOYA_WEATHER_FALLBACK;
+  if (!data) {
+    return {
+      weatherInfo: NAGOYA_WEATHER_FALLBACK,
+      wbgtMax,
+    };
   }
+
+  return buildNagoyaWeatherContext(data, today, wbgtMax);
+}
+
+export async function getNagoyaWeatherInfo(today = new Date()) {
+  return (await getNagoyaWeatherContext(today)).weatherInfo;
 }
 
 async function fetchJmaForecast() {
@@ -60,49 +72,122 @@ async function fetchJmaForecast() {
   }
 }
 
-function extractNagoyaWeather(data: JmaForecastResponse) {
-  const weatherArea = findArea(data[0]?.timeSeries?.[0]?.areas, "230010", "西部");
+async function fetchJmaForecastData() {
+  const response = await fetchJmaForecast();
 
-  return normalizeForecastText(weatherArea?.weathers?.find(Boolean));
-}
-
-function extractNagoyaTemperatureText(data: JmaForecastResponse, today: Date) {
-  const shortRange = data[0]?.timeSeries?.[2];
-  const weekly = data[1]?.timeSeries?.[1];
-  const shortRangeArea = findArea(shortRange?.areas, "51106", "名古屋");
-  const weeklyArea = findArea(weekly?.areas, "51106", "名古屋");
-  const maxTemp =
-    findMaxTemperatureForDate(shortRange?.timeDefines, shortRangeArea?.temps, today) ??
-    findMaxTemperatureForDate(weekly?.timeDefines, weeklyArea?.tempsMax, today);
-
-  if (!maxTemp) {
-    return NAGOYA_TEMPERATURE_FALLBACK;
+  if (!response.ok) {
+    return null;
   }
 
-  return `予想最高気温は ${maxTemp}度 です。`;
+  return (await response.json()) as JmaForecastResponse;
+}
+
+async function fetchNagoyaWbgtMax(today: Date) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), JMA_FORECAST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(NAGOYA_WBGT_FORECAST_URL, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return extractWbgtMaxForDate(await response.text(), today);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildNagoyaWeatherContext(data: JmaForecastResponse, today: Date, wbgtMax: number | null) {
+  const weatherSeries = data[0]?.timeSeries?.[0];
+  const precipitationSeries = data[0]?.timeSeries?.[1];
+  const shortRange = data[0]?.timeSeries?.[2];
+  const weekly = data[1]?.timeSeries?.[1];
+  const weatherArea = findArea(weatherSeries?.areas, "230010", "西部");
+  const precipitationArea = findArea(precipitationSeries?.areas, "230010", "西部");
+  const shortRangeArea = findArea(shortRange?.areas, "51106", "名古屋");
+  const weeklyArea = findArea(weekly?.areas, "51106", "名古屋");
+  const weatherText = findFirstTextForDate(weatherSeries?.timeDefines, weatherArea?.weathers, today);
+  const maxTemperature =
+    findMaxNumberForDate(shortRange?.timeDefines, shortRangeArea?.temps, today) ??
+    findMaxNumberForDate(weekly?.timeDefines, weeklyArea?.tempsMax, today);
+  const temperatureText =
+    maxTemperature === null ? NAGOYA_TEMPERATURE_FALLBACK : `予想最高気温は ${maxTemperature}度 です。`;
+  const weatherInfo = weatherText
+    ? `名古屋市の天気は「${weatherText}」。${temperatureText}`
+    : NAGOYA_WEATHER_FALLBACK;
+
+  return {
+    weatherInfo,
+    weatherText,
+    weatherCode: findFirstTextForDate(weatherSeries?.timeDefines, weatherArea?.weatherCodes, today),
+    maxTemperature,
+    minTemperature: findFirstNumberForDate(weekly?.timeDefines, weeklyArea?.tempsMin, today),
+    precipitationProbability: findMaxNumberForDate(
+      precipitationSeries?.timeDefines,
+      precipitationArea?.pops,
+      today,
+    ),
+    windText: findFirstTextForDate(weatherSeries?.timeDefines, weatherArea?.winds, today),
+    wbgtMax,
+  } satisfies NagoyaWeatherContext;
 }
 
 function findArea(areas: JmaForecastArea[] | undefined, code: string, name: string) {
   return areas?.find((area) => area.area?.code === code) ?? areas?.find((area) => area.area?.name === name);
 }
 
-function findMaxTemperatureForDate(timeDefines: string[] | undefined, temps: string[] | undefined, targetDate: Date) {
+function findMaxNumberForDate(timeDefines: string[] | undefined, values: string[] | undefined, targetDate: Date) {
   const targetDateKey = formatDateKeyInTimeZone(targetDate);
-  const numericTemps =
-    temps
+  const numericValues =
+    values
       ?.map((value, index) =>
-        formatDateKeyInTimeZone(timeDefines?.[index]) === targetDateKey ? parseTemperature(value) : null,
+        formatDateKeyInTimeZone(timeDefines?.[index]) === targetDateKey ? parseNumber(value) : null,
       )
-      .filter((temp): temp is number => temp !== null) ?? [];
+      .filter((value): value is number => value !== null) ?? [];
 
-  if (numericTemps.length === 0) {
+  if (numericValues.length === 0) {
     return null;
   }
 
-  return String(Math.max(...numericTemps));
+  return Math.max(...numericValues);
 }
 
-function parseTemperature(value: string | undefined) {
+function findFirstNumberForDate(timeDefines: string[] | undefined, values: string[] | undefined, targetDate: Date) {
+  const targetDateKey = formatDateKeyInTimeZone(targetDate);
+
+  return (
+    values
+      ?.map((value, index) =>
+        formatDateKeyInTimeZone(timeDefines?.[index]) === targetDateKey ? parseNumber(value) : null,
+      )
+      .find((value): value is number => value !== null) ?? null
+  );
+}
+
+function findFirstTextForDate(timeDefines: string[] | undefined, values: string[] | undefined, targetDate: Date) {
+  if (!timeDefines?.length) {
+    return normalizeForecastText(values?.find(Boolean));
+  }
+
+  const targetDateKey = formatDateKeyInTimeZone(targetDate);
+
+  return (
+    values
+      ?.map((value, index) =>
+        formatDateKeyInTimeZone(timeDefines[index]) === targetDateKey ? normalizeForecastText(value) : null,
+      )
+      .find((value): value is string => value !== null) ?? null
+  );
+}
+
+function parseNumber(value: string | undefined) {
   if (!value?.trim()) {
     return null;
   }
@@ -110,6 +195,19 @@ function parseTemperature(value: string | undefined) {
   const temperature = Number(value);
 
   return Number.isFinite(temperature) ? temperature : null;
+}
+
+function extractWbgtMaxForDate(csv: string, targetDate: Date) {
+  const lines = csv.split(/\r?\n/).filter(Boolean);
+  const header = lines[0]?.replace(/^\uFEFF/, "").split(",") ?? [];
+  const values = lines[1]?.split(",") ?? [];
+  const targetDateKey = formatDateKeyInTimeZone(targetDate)?.replace(/-/g, "");
+  const wbgtValues = header
+    .map((value, index) => (targetDateKey && value.trim().startsWith(targetDateKey) ? parseNumber(values[index]) : null))
+    .filter((value): value is number => value !== null)
+    .map((value) => value / 10);
+
+  return wbgtValues.length > 0 ? Math.max(...wbgtValues) : null;
 }
 
 function formatDateKeyInTimeZone(value: Date | string | undefined) {
