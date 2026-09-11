@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildDailyCareNotices } from "./dailyCare";
+import {
+  buildDailyCareNotices,
+  buildInfectionNoticeKey,
+  shouldIncludeInfectionNotice,
+} from "./dailyCare";
 
 const TODAY = new Date("2026-07-10T00:00:00+09:00");
 
@@ -67,6 +71,55 @@ describe("buildDailyCareNotices", () => {
         type: "infection",
       },
     ]);
+  });
+
+  it("suppresses the same infection report before the three-day interval", () => {
+    const trend = {
+      diseases: ["influenza"] as Array<"influenza">,
+      publishedAt: "2026-09-02T00:00:00.000Z",
+      reportingWeek: "2026年第35週",
+      sourceUrl: "https://example.com/weekly-report",
+    };
+    const state = {
+      key: buildInfectionNoticeKey(trend),
+      lastDisplayedAt: "2026-07-09T00:00:00.000Z",
+    };
+
+    expect(shouldIncludeInfectionNotice(trend, TODAY, state)).toBe(false);
+    expect(buildDailyCareNotices({ infectionTrend: trend }, TODAY, { infectionNoticeState: state })).toEqual([]);
+  });
+
+  it("allows the same infection report again after three Japan calendar days", () => {
+    const trend = {
+      diseases: ["influenza"] as Array<"influenza">,
+      publishedAt: "2026-09-02T00:00:00.000Z",
+      reportingWeek: "2026年第35週",
+      sourceUrl: "https://example.com/weekly-report",
+    };
+    const state = {
+      key: buildInfectionNoticeKey(trend),
+      lastDisplayedAt: "2026-07-07T00:00:00.000Z",
+    };
+
+    expect(shouldIncludeInfectionNotice(trend, TODAY, state)).toBe(true);
+    expect(buildDailyCareNotices({ infectionTrend: trend }, TODAY, { infectionNoticeState: state })).toHaveLength(1);
+  });
+
+  it("shows a revised report immediately even when the previous report was recent", () => {
+    const previousTrend = {
+      diseases: ["influenza"] as Array<"influenza">,
+      publishedAt: "2026-09-02T00:00:00.000Z",
+      reportingWeek: "2026年第35週",
+      sourceUrl: "https://example.com/weekly-report",
+    };
+    const revisedTrend = { ...previousTrend, publishedAt: "2026-09-03T00:00:00.000Z" };
+
+    expect(
+      shouldIncludeInfectionNotice(revisedTrend, TODAY, {
+        key: buildInfectionNoticeKey(previousTrend),
+        lastDisplayedAt: "2026-07-09T00:00:00.000Z",
+      }),
+    ).toBe(true);
   });
 
   it("warns about possible freezing after snow when the minimum temperature is at or below zero", () => {

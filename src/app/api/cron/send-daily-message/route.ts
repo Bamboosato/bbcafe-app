@@ -14,8 +14,10 @@ import {
   buildAutoBroadcastPushBody,
   createAutoSendRunId,
   getDailyBroadcastSettings,
+  getInfectionNoticeDisplayState,
   listSendRuns,
   listSelectedBroadcastUsers,
+  recordInfectionNoticeDisplayed,
   reserveAutoSendRun,
   saveSendRun,
 } from "@/features/messages/server/broadcasts";
@@ -23,6 +25,7 @@ import {
   buildAutoBroadcastResultPushPayload,
   sendPushNotificationsToViewers,
 } from "@/features/messages/server/pushNotifications";
+import type { DailyCareInfectionNoticeState } from "@/features/messages/server/dailyCare";
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { createRequestId } from "@/lib/server/request";
 import type { SendRunTargetView, UserInfoView } from "@/features/messages/types";
@@ -116,9 +119,22 @@ async function runDailyMessageForLineAccount(lineAccountId: string, requestId: s
 
     const todayCalendarEvents = await listTodayCalendarEvents(lineAccountId, startedAt);
     const recentSendRuns = await listSendRuns(lineAccountId, 20);
-    const { text } = await generateDailyGreetingMessage({
+    let infectionNoticeState: DailyCareInfectionNoticeState | null = null;
+
+    try {
+      infectionNoticeState = await getInfectionNoticeDisplayState(lineAccountId);
+    } catch (stateError) {
+      console.error("[cron-send-daily-message] infection notice state unavailable", {
+        lineAccountId,
+        message: stateError instanceof Error ? stateError.message : String(stateError),
+        requestId,
+      });
+    }
+
+    const { infectionNoticeKey, text } = await generateDailyGreetingMessage({
       calendarEventInfo: buildCalendarEventsSummary(todayCalendarEvents),
       externalCareSignalsEnabled: settings.externalCareSignalsEnabled,
+      infectionNoticeState,
       recentOpeningExamples: buildRecentGreetingOpeningExamples(recentSendRuns, startedAt),
       today: startedAt,
     });
@@ -132,6 +148,21 @@ async function runDailyMessageForLineAccount(lineAccountId: string, requestId: s
     const targets = toSendRunTargets(selectedUsers, results);
     const successCount = targets.filter((target) => target.status === "success").length;
     const failedCount = targets.filter((target) => target.status === "failed").length;
+
+    if (infectionNoticeKey && successCount > 0) {
+      await recordInfectionNoticeDisplayed({
+        displayedAt: startedAt,
+        key: infectionNoticeKey,
+        lineAccountId,
+      }).catch((stateError) => {
+        console.error("[cron-send-daily-message] failed to record infection notice state", {
+          lineAccountId,
+          message: stateError instanceof Error ? stateError.message : String(stateError),
+          requestId,
+        });
+      });
+    }
+
     const run = await saveSendRun({
       historyRetentionDays: settings.historyRetentionDays,
       lineAccountId,

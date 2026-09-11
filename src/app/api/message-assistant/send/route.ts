@@ -8,6 +8,7 @@ import {
   createManualSendRunId,
   getDailyBroadcastSettings,
   listSelectedBroadcastUsers,
+  recordInfectionNoticeDisplayed,
   saveSendRun,
 } from "@/features/messages/server/broadcasts";
 import type { SendRunTargetView, UserInfoView } from "@/features/messages/types";
@@ -15,6 +16,7 @@ import type { SendRunTargetView, UserInfoView } from "@/features/messages/types"
 export const runtime = "nodejs";
 
 type SendRequestBody = {
+  infectionNoticeKey?: unknown;
   message?: unknown;
   userIds?: unknown;
 };
@@ -36,6 +38,7 @@ export async function POST(request: Request) {
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
+  const infectionNoticeKey = parseInfectionNoticeKey(body.infectionNoticeKey);
   const requestedUserIds = parseRequestedUserIds(body.userIds);
 
   if (!message) {
@@ -78,6 +81,20 @@ export async function POST(request: Request) {
       userIds: selectedUsers.map((user) => user.userId),
     });
     const failed = results.filter((result) => !result.ok);
+
+    if (infectionNoticeKey && failed.length < results.length) {
+      await recordInfectionNoticeDisplayed({
+        displayedAt: sentAt,
+        key: infectionNoticeKey,
+        lineAccountId: auth.payload.lineAccountId,
+      }).catch((stateError) => {
+        console.error("[message-assistant-send] failed to record infection notice state", {
+          message: stateError instanceof Error ? stateError.message : String(stateError),
+          requestId,
+        });
+      });
+    }
+
     const targets = toSendRunTargets(selectedUsers, results);
     const settings = await getDailyBroadcastSettings(auth.payload.lineAccountId);
     const sendRun = await saveSendRun({
@@ -146,6 +163,16 @@ export function parseRequestedUserIds(value: unknown) {
   }
 
   return [...new Set(value.map((userId) => (typeof userId === "string" ? userId.trim() : "")).filter(Boolean))];
+}
+
+export function parseInfectionNoticeKey(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+
+  return normalized && normalized.length <= 1000 ? normalized : undefined;
 }
 
 export function resolveManualSendUsers(users: UserInfoView[], requestedUserIds: string[] | undefined) {

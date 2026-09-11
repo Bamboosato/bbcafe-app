@@ -138,6 +138,7 @@ type PushPublicKeyResponse = {
 };
 
 type GenerateMessageResponse = {
+  infectionNoticeKey?: string;
   location: string;
   message: string;
   warning?: string;
@@ -191,6 +192,7 @@ export default function ViewerApp({
   const [selectedSendRun, setSelectedSendRun] = useState<SendRunView | null>(null);
   const [manualSendUserIds, setManualSendUserIds] = useState<string[]>([]);
   const [generatedMessage, setGeneratedMessage] = useState("");
+  const [generatedInfectionNoticeKey, setGeneratedInfectionNoticeKey] = useState("");
   const [generatedMessageLocation, setGeneratedMessageLocation] = useState("");
   const [generatedMessageStatus, setGeneratedMessageStatus] = useState("");
   const [generatingMessage, setGeneratingMessage] = useState(false);
@@ -1240,6 +1242,7 @@ export default function ViewerApp({
   async function handleGenerateMessage() {
     setError("");
     setGeneratedMessageStatus("");
+    setGeneratedInfectionNoticeKey("");
     setGeneratingMessage(true);
 
     try {
@@ -1253,6 +1256,7 @@ export default function ViewerApp({
       }
 
       setGeneratedMessage(result.data?.message ?? "");
+      setGeneratedInfectionNoticeKey(result.data?.infectionNoticeKey ?? "");
       setGeneratedMessageLocation(result.data?.location ?? "");
       setGeneratedMessageStatus(result.data?.warning ?? "メッセージを作成しました。");
     } finally {
@@ -1268,6 +1272,7 @@ export default function ViewerApp({
     try {
       const result = await fetchJson<SendGeneratedMessageResponse>("/api/message-assistant/send", {
         body: JSON.stringify({
+          ...(generatedInfectionNoticeKey ? { infectionNoticeKey: generatedInfectionNoticeKey } : {}),
           message: generatedMessage,
           userIds: manualSendUserIds,
         }),
@@ -1289,11 +1294,17 @@ export default function ViewerApp({
           ? `${sentCount}件送信しました。${failedCount}件は送信できませんでした。`
           : `${sentCount}件のユーザに送信しました。`,
       );
+      setGeneratedInfectionNoticeKey("");
       void loadSentRuns();
       void loadConfirmationTargets();
     } finally {
       setSendingGeneratedMessage(false);
     }
+  }
+
+  function handleGeneratedMessageChange(message: string) {
+    setGeneratedMessage(message);
+    setGeneratedInfectionNoticeKey("");
   }
 
   async function handleAutomationEnabledChange(enabled: boolean) {
@@ -1668,7 +1679,7 @@ export default function ViewerApp({
           onAutomationEnabledChange={(enabled) => void handleAutomationEnabledChange(enabled)}
           onGenerate={() => void handleGenerateMessage()}
           onManualSendUserSelectionChange={handleManualSendUserSelectionChange}
-          onMessageChange={setGeneratedMessage}
+          onMessageChange={handleGeneratedMessageChange}
           onOpenUsers={showUserInfoView}
           onSend={() => void handleSendGeneratedMessage()}
           manualSendUserIds={manualSendUserIds}
