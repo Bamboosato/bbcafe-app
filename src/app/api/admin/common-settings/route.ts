@@ -13,7 +13,7 @@ import {
   getLineAccount,
   updateLineAccountSettings,
 } from "@/features/messages/server/lineAccounts";
-import type { CommonSettingsView } from "@/features/messages/types";
+import type { AutomationSettingsView, CommonSettingsView } from "@/features/messages/types";
 
 export const runtime = "nodejs";
 
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
       getDailyBroadcastSettings(auth.payload.lineAccountId),
     ]);
 
-    return jsonData({ settings: toCommonSettingsView(account, automationSettings.historyRetentionDays) }, requestId);
+    return jsonData({ settings: toCommonSettingsView(account, automationSettings) }, requestId);
   } catch (error) {
     console.error("[common-settings-get] failed", {
       message: error instanceof Error ? error.message : String(error),
@@ -57,6 +57,7 @@ export async function PATCH(request: Request) {
     const channelSecret = pickString(body, "channelSecret")?.trim();
     const receivedRetentionDays = pickPositiveInteger(body, "receivedRetentionDays");
     const sentRetentionDays = pickPositiveInteger(body, "sentRetentionDays");
+    const externalCareSignalsEnabled = pickBoolean(body, "externalCareSignalsEnabled");
     const credentialsProvided = Boolean(channelSecret || channelAccessToken);
 
     if (!channelId || !receivedRetentionDays || !sentRetentionDays) {
@@ -110,12 +111,13 @@ export async function PATCH(request: Request) {
         retentionDays: receivedRetentionDays,
       }),
       updateDailyBroadcastSettings({
+        externalCareSignalsEnabled,
         historyRetentionDays: sentRetentionDays,
         lineAccountId: auth.payload.lineAccountId,
       }),
     ]);
 
-    return jsonData({ settings: toCommonSettingsView(account, automationSettings.historyRetentionDays) }, requestId);
+    return jsonData({ settings: toCommonSettingsView(account, automationSettings) }, requestId);
   } catch (error) {
     if (error instanceof Error && error.message === "INVALID_JSON") {
       return jsonError(400, "INVALID_JSON", "JSONとして解析できません。", requestId);
@@ -142,7 +144,7 @@ export async function PATCH(request: Request) {
   }
 }
 
-function toCommonSettingsView(
+export function toCommonSettingsView(
   account: {
     accessTokenValidatedAt: null | string;
     channelAccessTokenRef: string;
@@ -154,7 +156,7 @@ function toCommonSettingsView(
     retentionDays: number;
     webhookVerifiedAt: null | string;
   },
-  sentRetentionDays: number,
+  automationSettings: Pick<AutomationSettingsView, "externalCareSignalsEnabled" | "historyRetentionDays">,
 ): CommonSettingsView {
   const channelAccessTokenConfigured = isCredentialConfigured(
     account.credentialProvider,
@@ -173,9 +175,10 @@ function toCommonSettingsView(
     channelId: account.channelId,
     channelSecretConfigured,
     displayName: account.displayName,
+    externalCareSignalsEnabled: automationSettings.externalCareSignalsEnabled,
     lineAccountId: account.lineAccountId,
     receivedRetentionDays: account.retentionDays,
-    sentRetentionDays,
+    sentRetentionDays: automationSettings.historyRetentionDays,
     webhookUrlPath: `/api/line/webhook/${account.lineAccountId}`,
   };
 }
@@ -215,4 +218,14 @@ function pickPositiveInteger(value: unknown, key: string) {
   const number = Number(raw);
 
   return Number.isInteger(number) && number >= 1 ? number : undefined;
+}
+
+function pickBoolean(value: unknown, key: string) {
+  if (typeof value !== "object" || value === null || !(key in value)) {
+    return undefined;
+  }
+
+  const raw = (value as Record<string, unknown>)[key];
+
+  return typeof raw === "boolean" ? raw : undefined;
 }

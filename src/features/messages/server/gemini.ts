@@ -87,9 +87,11 @@ export async function generateDailyGreetingMessage({
   location = process.env.MESSAGE_LOCATION?.trim() || DEFAULT_MESSAGE_LOCATION,
   recentOpeningExamples = [],
   today = new Date(),
+  externalCareSignalsEnabled = false,
   weatherInfo,
 }: {
   calendarEventInfo?: string;
+  externalCareSignalsEnabled?: boolean;
   location?: string;
   recentOpeningExamples?: string[];
   today?: Date;
@@ -106,7 +108,7 @@ export async function generateDailyGreetingMessage({
 
   const models = getGeminiModelCandidates();
   const timeOfDayGreeting = getTimeOfDayGreeting(today);
-  const greetingContext = await buildDailyGreetingContext({ today, weatherInfo });
+  const greetingContext = await buildDailyGreetingContext({ today, weatherInfo, externalCareSignalsEnabled });
   const birthFlower = getBirthFlowerForDate(today, DAILY_GREETING_TIME_ZONE);
   const contentMaxAttempts = recentOpeningExamples.length > 0 ? DAILY_GREETING_CONTENT_MAX_ATTEMPTS : 1;
   let recentOpeningKeywords = buildRecentGreetingOpeningKeywords(recentOpeningExamples);
@@ -533,8 +535,18 @@ function appendDailyGreetingBirthFlower(text: string, birthFlower: BirthFlower |
   return `${text}\n\n今日の誕生花は${birthFlower.flower}、花言葉は${birthFlower.language}です。\n${sourceUrl}`;
 }
 
-async function buildDailyGreetingContext({ today, weatherInfo }: { today: Date; weatherInfo?: string }) {
-  const weatherContext = weatherInfo ? undefined : await getNagoyaWeatherContext(today);
+async function buildDailyGreetingContext({
+  today,
+  weatherInfo,
+  externalCareSignalsEnabled,
+}: {
+  today: Date;
+  externalCareSignalsEnabled?: boolean;
+  weatherInfo?: string;
+}) {
+  const weatherContext = weatherInfo
+    ? undefined
+    : await getNagoyaWeatherContext(today, { externalCareSignalsEnabled });
   const baseWeatherInfo = weatherInfo ?? weatherContext?.weatherInfo ?? "";
 
   return {

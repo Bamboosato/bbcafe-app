@@ -1,4 +1,5 @@
 import type { DailyCareWeatherSignals } from "./dailyCare";
+import { getExternalCareSignals } from "./externalCareSignals";
 
 const JMA_AICHI_FORECAST_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/230000.json";
 const NAGOYA_WBGT_FORECAST_URL = "https://www.wbgt.env.go.jp/prev15WG/dl/yohou_51106.csv";
@@ -36,26 +37,38 @@ export type NagoyaWeatherContext = DailyCareWeatherSignals & {
   weatherInfo: string;
 };
 
-export async function getNagoyaWeatherContext(today = new Date()): Promise<NagoyaWeatherContext> {
-  const [jmaResult, wbgtResult] = await Promise.allSettled([
+export async function getNagoyaWeatherContext(
+  today = new Date(),
+  { externalCareSignalsEnabled = false }: { externalCareSignalsEnabled?: boolean } = {},
+): Promise<NagoyaWeatherContext> {
+  const externalCareSignalsPromise = externalCareSignalsEnabled
+    ? getExternalCareSignals(today)
+    : Promise.resolve<DailyCareWeatherSignals | null>(null);
+  const [jmaResult, wbgtResult, externalCareSignalsResult] = await Promise.allSettled([
     fetchJmaForecastData(),
     fetchNagoyaWbgtMax(today),
+    externalCareSignalsPromise,
   ]);
   const data = jmaResult.status === "fulfilled" ? jmaResult.value : null;
   const wbgtMax = wbgtResult.status === "fulfilled" ? wbgtResult.value : null;
+  const externalCareSignals = externalCareSignalsResult.status === "fulfilled" ? externalCareSignalsResult.value : null;
 
   if (!data) {
     return {
       weatherInfo: NAGOYA_WEATHER_FALLBACK,
       wbgtMax,
+      ...(externalCareSignals ?? {}),
     };
   }
 
-  return buildNagoyaWeatherContext(data, today, wbgtMax);
+  return buildNagoyaWeatherContext(data, today, wbgtMax, externalCareSignals);
 }
 
-export async function getNagoyaWeatherInfo(today = new Date()) {
-  return (await getNagoyaWeatherContext(today)).weatherInfo;
+export async function getNagoyaWeatherInfo(
+  today = new Date(),
+  options: { externalCareSignalsEnabled?: boolean } = {},
+) {
+  return (await getNagoyaWeatherContext(today, options)).weatherInfo;
 }
 
 async function fetchJmaForecast() {
@@ -104,7 +117,12 @@ async function fetchNagoyaWbgtMax(today: Date) {
   }
 }
 
-function buildNagoyaWeatherContext(data: JmaForecastResponse, today: Date, wbgtMax: number | null) {
+function buildNagoyaWeatherContext(
+  data: JmaForecastResponse,
+  today: Date,
+  wbgtMax: number | null,
+  externalCareSignals: DailyCareWeatherSignals | null,
+) {
   const weatherSeries = data[0]?.timeSeries?.[0];
   const precipitationSeries = data[0]?.timeSeries?.[1];
   const shortRange = data[0]?.timeSeries?.[2];
@@ -136,6 +154,7 @@ function buildNagoyaWeatherContext(data: JmaForecastResponse, today: Date, wbgtM
     ),
     windText: findFirstTextForDate(weatherSeries?.timeDefines, weatherArea?.winds, today),
     wbgtMax,
+    ...(externalCareSignals ?? {}),
   } satisfies NagoyaWeatherContext;
 }
 

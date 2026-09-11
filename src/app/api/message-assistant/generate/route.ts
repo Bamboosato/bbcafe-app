@@ -8,7 +8,10 @@ import {
   buildCalendarEventsSummary,
   listTodayCalendarEvents,
 } from "@/features/messages/server/calendarEvents";
-import { listSendRuns } from "@/features/messages/server/broadcasts";
+import {
+  getDailyBroadcastSettings,
+  listSendRuns,
+} from "@/features/messages/server/broadcasts";
 import { jsonData, jsonError } from "@/lib/server/api-response";
 import { requireViewerSession } from "@/lib/server/auth";
 import { createRequestId } from "@/lib/server/request";
@@ -28,8 +31,22 @@ export async function POST(request: Request) {
     const todayCalendarEvents = await listTodayCalendarEvents(auth.payload.lineAccountId, today);
     const todayCalendarEventText = buildCalendarEventsSummary(todayCalendarEvents);
     const recentSendRuns = await listSendRuns(auth.payload.lineAccountId, 20);
+    let externalCareSignalsEnabled = false;
+
+    try {
+      externalCareSignalsEnabled = (
+        await getDailyBroadcastSettings(auth.payload.lineAccountId)
+      ).externalCareSignalsEnabled;
+    } catch (settingsError) {
+      console.error("[message-assistant-generate] daily care settings unavailable", {
+        message: settingsError instanceof Error ? settingsError.message : String(settingsError),
+        requestId,
+      });
+    }
+
     const { location, text } = await generateDailyGreetingMessage({
       calendarEventInfo: todayCalendarEventText,
+      externalCareSignalsEnabled,
       recentOpeningExamples: buildRecentGreetingOpeningExamples(recentSendRuns, today),
       today,
     });

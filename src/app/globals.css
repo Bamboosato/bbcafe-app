@@ -386,6 +386,19 @@ label {
   grid-column: 1 / -1;
 }
 
+.settings-external-toggle {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.settings-external-toggle .status-text {
+  margin: 0;
+}
+
 .readonly-value {
   align-items: center;
   background: var(--surface);

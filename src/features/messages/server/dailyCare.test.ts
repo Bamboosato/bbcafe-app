@@ -31,6 +31,44 @@ describe("buildDailyCareNotices", () => {
     expect(notices[0]?.text).toContain(expectedText);
   });
 
+  it("prioritizes official WBGT alert and weather advisory over heuristic notices", () => {
+    const notices = buildDailyCareNotices(
+      {
+        jmaWarnings: [{ code: "14", kind: "thunder", name: "雷注意報", severity: "advisory" }],
+        precipitationProbability: 70,
+        weatherText: "雨",
+        wbgtAlert: "warning",
+      },
+      TODAY,
+    );
+
+    expect(notices.map((notice) => notice.type)).toEqual(["heat", "weather"]);
+    expect(notices[0]?.text).toContain("熱中症警戒");
+    expect(notices[1]?.text).toContain("雷注意報");
+  });
+
+  it("adds one combined infection notice when both trends are increasing", () => {
+    const notices = buildDailyCareNotices(
+      {
+        infectionTrend: {
+          diseases: ["influenza", "covid19"],
+          publishedAt: "2026-09-02T00:00:00.000Z",
+          reportingWeek: "2026年第35週",
+          sourceUrl: "https://example.com/weekly-report",
+        },
+      },
+      TODAY,
+    );
+
+    expect(notices).toEqual([
+      {
+        priority: 60,
+        text: "【感染症対策】愛知県の最新週報でインフルエンザと新型コロナウイルス感染症が増加傾向です。外出後は手洗いを心がけ、体調がすぐれないときは無理をしないでください。",
+        type: "infection",
+      },
+    ]);
+  });
+
   it("warns about possible freezing after snow when the minimum temperature is at or below zero", () => {
     const notices = buildDailyCareNotices(
       {

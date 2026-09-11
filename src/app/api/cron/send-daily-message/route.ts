@@ -118,6 +118,7 @@ async function runDailyMessageForLineAccount(lineAccountId: string, requestId: s
     const recentSendRuns = await listSendRuns(lineAccountId, 20);
     const { text } = await generateDailyGreetingMessage({
       calendarEventInfo: buildCalendarEventsSummary(todayCalendarEvents),
+      externalCareSignalsEnabled: settings.externalCareSignalsEnabled,
       recentOpeningExamples: buildRecentGreetingOpeningExamples(recentSendRuns, startedAt),
       today: startedAt,
     });
