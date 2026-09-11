@@ -1,5 +1,6 @@
 const JMA_AICHI_FORECAST_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/230000.json";
 const JMA_FORECAST_TIMEOUT_MS = 10000;
+const JMA_TIME_ZONE = "Asia/Tokyo";
 const NAGOYA_WEATHER_FALLBACK = "名古屋市の今日の気候に合わせた穏やかな日です。";
 const NAGOYA_TEMPERATURE_FALLBACK = "気温の変化に気をつけてお過ごしください。";
 
@@ -14,6 +15,7 @@ type JmaForecastArea = {
 };
 
 type JmaForecastTimeSeries = {
+  timeDefines?: string[];
   areas?: JmaForecastArea[];
 };
 
@@ -23,7 +25,7 @@ type JmaForecastEntry = {
 
 type JmaForecastResponse = JmaForecastEntry[];
 
-export async function getNagoyaWeatherInfo() {
+export async function getNagoyaWeatherInfo(today = new Date()) {
   try {
     const response = await fetchJmaForecast();
 
@@ -38,7 +40,7 @@ export async function getNagoyaWeatherInfo() {
       return NAGOYA_WEATHER_FALLBACK;
     }
 
-    return `名古屋市の天気は「${weatherText}」。${extractNagoyaTemperatureText(data)}`;
+    return `名古屋市の天気は「${weatherText}」。${extractNagoyaTemperatureText(data, today)}`;
   } catch {
     return NAGOYA_WEATHER_FALLBACK;
   }
@@ -64,10 +66,14 @@ function extractNagoyaWeather(data: JmaForecastResponse) {
   return normalizeForecastText(weatherArea?.weathers?.find(Boolean));
 }
 
-function extractNagoyaTemperatureText(data: JmaForecastResponse) {
-  const shortRangeArea = findArea(data[0]?.timeSeries?.[2]?.areas, "51106", "名古屋");
-  const weeklyArea = findArea(data[1]?.timeSeries?.[1]?.areas, "51106", "名古屋");
-  const maxTemp = findMaxTemperature(shortRangeArea?.temps) ?? findFirstTemperature(weeklyArea?.tempsMax);
+function extractNagoyaTemperatureText(data: JmaForecastResponse, today: Date) {
+  const shortRange = data[0]?.timeSeries?.[2];
+  const weekly = data[1]?.timeSeries?.[1];
+  const shortRangeArea = findArea(shortRange?.areas, "51106", "名古屋");
+  const weeklyArea = findArea(weekly?.areas, "51106", "名古屋");
+  const maxTemp =
+    findMaxTemperatureForDate(shortRange?.timeDefines, shortRangeArea?.temps, today) ??
+    findMaxTemperatureForDate(weekly?.timeDefines, weeklyArea?.tempsMax, today);
 
   if (!maxTemp) {
     return NAGOYA_TEMPERATURE_FALLBACK;
@@ -80,18 +86,20 @@ function findArea(areas: JmaForecastArea[] | undefined, code: string, name: stri
   return areas?.find((area) => area.area?.code === code) ?? areas?.find((area) => area.area?.name === name);
 }
 
-function findMaxTemperature(temps: string[] | undefined) {
-  const numericTemps = temps?.map(parseTemperature).filter((temp): temp is number => temp !== null) ?? [];
+function findMaxTemperatureForDate(timeDefines: string[] | undefined, temps: string[] | undefined, targetDate: Date) {
+  const targetDateKey = formatDateKeyInTimeZone(targetDate);
+  const numericTemps =
+    temps
+      ?.map((value, index) =>
+        formatDateKeyInTimeZone(timeDefines?.[index]) === targetDateKey ? parseTemperature(value) : null,
+      )
+      .filter((temp): temp is number => temp !== null) ?? [];
 
   if (numericTemps.length === 0) {
     return null;
   }
 
   return String(Math.max(...numericTemps));
-}
-
-function findFirstTemperature(temps: string[] | undefined) {
-  return temps?.map(parseTemperature).find((temp): temp is number => temp !== null)?.toString() ?? null;
 }
 
 function parseTemperature(value: string | undefined) {
@@ -102,6 +110,26 @@ function parseTemperature(value: string | undefined) {
   const temperature = Number(value);
 
   return Number.isFinite(temperature) ? temperature : null;
+}
+
+function formatDateKeyInTimeZone(value: Date | string | undefined) {
+  const date = typeof value === "string" ? new Date(value) : value;
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const dateParts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: JMA_TIME_ZONE,
+    year: "numeric",
+  }).formatToParts(date);
+  const year = dateParts.find((part) => part.type === "year")?.value;
+  const month = dateParts.find((part) => part.type === "month")?.value;
+  const day = dateParts.find((part) => part.type === "day")?.value;
+
+  return year && month && day ? `${year}-${month}-${day}` : null;
 }
 
 function normalizeForecastText(value: string | undefined) {

@@ -92,6 +92,8 @@ generateDailyGreetingMessage
 - 一時エラー時だけ再試行・切替し、非一時エラーは即時失敗すること。
 - 手動生成と自動送信Cronが同じ切替ルールを使うこと。
 - 既存の天気、誕生日、記念日、直近の冒頭文制約が両モデルに同じ内容で渡ること。
+- 天気の最高気温は、気象庁レスポンスの`timeDefines`と気温配列を対応付け、生成対象日のJSTの日付に一致する値だけから算出すること。
+- 手動生成と自動送信Cronで、同じ生成対象日を天気取得処理にも渡すこと。
 
 ### 5.2 非機能観点
 
@@ -134,13 +136,17 @@ generateDailyGreetingMessage
 | G-012 | 状態遷移 | 主系再試行→フォールバック成功 | 途中失敗から最終成功へ遷移し、失敗扱いを残さないことを確認する |
 | G-013 | 状態遷移 | 全候補失敗 | 成功保存・LINE送信へ進まず、既存の失敗処理へ遷移することを確認する |
 | G-014 | 回帰 | 既存の生成本文検証 | 空本文、`MAX_TOKENS`、禁止された終了理由、冒頭重複の既存挙動を維持することを確認する |
+| W-001 | 正常系・データ | 今日より明日の気温が高い | 今日の`timeDefines`に対応する値だけから最高気温を算出し、明日の値を採用しないことを確認する |
+| W-002 | 異常系・データ | 今日の短期予報が欠落 | 週間予報の今日の値が有効な場合だけ今日の値を採用することを確認する |
+| W-003 | 境界値 | 今日の値が空欄、明日の値が有効 | 明日の値を誤採用せず、気温フォールバックへ遷移することを確認する |
+| W-004 | 境界値 | JSTの日付境界 | UTC上では前日でもJSTで当日となる生成日時を、当日の予報日として扱うことを確認する |
 
 ## 7. 実行範囲と証跡
 
 ### 実装時に必須
 
-- `src/features/messages/server/gemini.test.ts`の対象テストを更新・追加する。
-- `npm run test -- src/features/messages/server/gemini.test.ts`相当の対象単体テストを実行する。
+- `src/features/messages/server/gemini.test.ts`と`src/features/messages/server/weather.test.ts`の対象テストを更新・追加する。
+- `npm run test -- src/features/messages/server/gemini.test.ts src/features/messages/server/weather.test.ts`相当の対象単体テストを実行する。
 - `npm run typecheck`、`npm run lint`、`npm run build`を実行する。
 - `fetch`の呼出し順、URL、リクエストボディのモデル別設定をテスト失敗時の証跡として残す。
 
