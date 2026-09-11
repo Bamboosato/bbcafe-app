@@ -119,4 +119,6 @@ Preview Deploymentで確認するためのEnvironment Variablesと確認項目�
 
 ## 設計書
 
+[BB Cafe Messages v2.0.0 要件定義](docs/requirements-v2.0.0.md)
+
 [LINE Message Viewer 詳細設計](docs/line-message-viewer-detail-design.md)
