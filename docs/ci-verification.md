@@ -59,7 +59,7 @@ Node 24、Java 21以上とパッケージ／Emulator取得用ネットワーク�
 | 本番監査 | 0件、例外なしで成功 |
 | 全依存監査 | High 5件。指定したdev例外だけを許容して成功 |
 | build | 成功 |
-| Firebase Emulator（Windows） | 検査開始前にJava 21のUnixDomainSockets.connectでInvalid argument。短いjava.io.tmpdirを指定しても再現。SDK互換性の合否は未判定 |
+| Firebase Emulator（Windows） | 検査開始前にAndroid Studio付属Java 21のUnixDomainSockets.connectでInvalid argument。短いjava.io.tmpdirでも再現し、WindowsSelectorProvider指定でも起動失敗。SDK互換性の合否は未判定 |
 | E2E・クロスブラウザー | 未実施。前述の範囲選定による |
 
 最初のVitest・build・Node標準テストはsandboxの子プロセスspawn EPERMで失敗し、通常権限で再実行して成功した。実装の試験失敗とは区別する。GitHubでの起動・Ubuntu上のEmulator・Artifact保存は公開後に確認し、ローカルの成功から推定しない。

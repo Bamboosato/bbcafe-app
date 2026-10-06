@@ -49,7 +49,8 @@ export function evaluateAudit(report, lock, config, { production = false, now = 
         new Date(expires).toISOString() !== exception.expiresAt.replace("Z", ".000Z")) fail(`Invalid or expired exception: ${exception.advisory}`);
     const paths = new Set();
     for (const pkg of exception.packages) {
-      if (!isObject(pkg) || typeof pkg.name !== "string" || typeof pkg.version !== "string" ||
+      if (!isObject(pkg)) { fail("Invalid exception package"); continue; }
+      if (typeof pkg.name !== "string" || typeof pkg.version !== "string" ||
           typeof pkg.path !== "string" || paths.has(pkg.path) ||
           !pkg.path.endsWith(`node_modules/${pkg.name}`) ||
           lock.packages[pkg.path]?.version !== pkg.version || lock.packages[pkg.path]?.dev !== true) {

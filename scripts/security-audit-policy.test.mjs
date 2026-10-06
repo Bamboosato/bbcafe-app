@@ -74,6 +74,7 @@ test("exception requires a reason, owner, UTC dates and maximum 30-day duration"
     (e) => { e.expiresAt = "2026-11-06T00:00:00Z"; },
     (e) => { e.expiresAt = "invalid"; },
     (e) => { e.packages.push(e.packages[0]); },
+    (e) => { e.packages.push(null); },
   ]) { const f = fixture(); mutate(f.config.exceptions[0]); assert.equal(check(f).ok, false); }
 });
 
