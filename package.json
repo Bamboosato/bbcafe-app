@@ -9,6 +9,10 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:security": "node --test scripts/security-audit-policy.test.mjs",
+    "audit:security": "node scripts/security-audit.mjs",
+    "test:firebase": "npx --yes firebase-tools@15.32.1 emulators:exec --only auth,firestore --project demo-bbcafe-security --config scripts/firebase-smoke.config.json \"node scripts/firebase-security-smoke.mjs\"",
+    "typegen": "next typegen",
     "typecheck": "tsc --noEmit",
     "generate-vapid-keys": "node scripts/generate-vapid-keys.mjs",
     "hash-password": "node scripts/hash-password.mjs"
@@ -26,7 +30,7 @@
   },
   "homepage": "https://github.com/Bamboosato/bbcafe-app#readme",
   "dependencies": {
-    "firebase": "^12.14.0",
+    "firebase": "^12.19.0",
     "firebase-admin": "^13.10.0",
     "next": "^16.3.6",
     "react": "^19.2.6",
@@ -39,11 +43,14 @@
     "@types/react-dom": "^19.2.3",
     "@types/web-push": "^3.6.4",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.6",
+    "eslint-config-next": "^16.3.6",
     "typescript": "^6.0.3",
     "vitest": "^5.0.3"
   },
   "overrides": {
+    "@firebase/firestore": {
+      "@grpc/grpc-js": "1.14.5"
+    },
     "postcss": "^8.5.14",
     "uuid": "^11.1.1"
   }

@@ -1,0 +1,18 @@
+{
+  "exceptions": [
+    {
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "createdAt": "2026-10-06T00:00:00Z",
+      "expiresAt": "2026-11-05T00:00:00Z",
+      "owner": "Bamboosato",
+      "reason": "No patched braces release as of 2026-10-06. Only the dev-only Next ESLint glob chain is accepted temporarily; production dependencies and new advisories remain blocked.",
+      "packages": [
+        { "name": "braces", "version": "3.0.3", "path": "node_modules/braces" },
+        { "name": "micromatch", "version": "4.0.8", "path": "node_modules/micromatch" },
+        { "name": "fast-glob", "version": "3.3.1", "path": "node_modules/fast-glob" },
+        { "name": "@next/eslint-plugin-next", "version": "16.3.6", "path": "node_modules/@next/eslint-plugin-next" },
+        { "name": "eslint-config-next", "version": "16.3.6", "path": "node_modules/eslint-config-next" }
+      ]
+    }
+  ]
+}

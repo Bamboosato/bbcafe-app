@@ -1,1059 +1,230 @@
 # LINE Message Viewer 詳細設計
 
-## 1. 目的
+2026-10-06時点の実装を記載する。旧共有ID／管理者ID認証の初期設計を現行のFirebase Auth方式へ改訂した。変更履歴はGit履歴を参照する。機能別の詳細・テスト観点は末尾の関連文書に記載する。
 
-LINE公式アカウントに通知されたテキストメッセージをWebアプリで閲覧できるようにする。
+## 1. 全体構成と実装範囲
 
-個人グループでの利用を主目的とし、商用利用や大規模運用は初回リリースの対象外とする。
+Next.js App Routerの画面とRoute HandlerをVercelに配置し、Firebase Authで認証、Firebase Admin SDKでFirestoreへアクセスする。LINE Messaging APIのWebhookで受信し、Push APIで手動／自動配信する。PWAのService WorkerはWeb Pushを受け取る。
 
-## 2. 確定方針
-
-| 項目 | 方針 |
+| 項目 | 現行仕様 |
 | --- | --- |
-| 対象LINEアカウント | LINE公式アカウント |
-| 初回のLINEアカウント数 | 1アカウント固定 |
-| 将来のLINEアカウント追加 | 考慮する |
-| 対象トーク | 1対1トーク、グループトーク |
-| 初回対象メッセージ | テキストのみ |
-| Webhook | LINE Messaging API |
-| Webアプリ | Vercel上のNext.js想定 |
-| データ保存 | Firestore |
-| 閲覧認証 | 共有ID + パスワード |
-| 閲覧セッション | サーバーCookie方式 |
-| 管理認証 | 管理者ID + パスワード |
-| Cookie有効期限 | 24時間 |
-| パスワードハッシュ | `pbkdf2:sha256:<iterations>:<salt>:<hash>` |
-| LINE秘匿情報の初回保存 | Vercel Environment Variables |
-| LINE秘匿情報の将来保存 | 暗号化してFirestore保存 |
-| 自動削除 | Vercel Cron + 通常のFirestore delete |
-| Firestore TTL | 使用しない |
-| Firebase Scheduled Functions | 初回は使用しない |
-| グループ名取得失敗時 | `ユーザグループ` |
-| 取消メッセージ | Webアプリ側から削除 |
-| 更新方式 | 30秒ごとの再取得 + 手動更新 |
+| アカウント | Firebase Authユーザーごとに内部`lineAccountId`を割当 |
+| 受信 | テキストのみ。1対1・グループ・複数人トーク |
+| 配信 | 保存済み配信対象への共通本文。手動時は対象の一部選択が可能 |
+| 作成 | Gemini、当日のカレンダー、名古屋の天気・誕生花・注意情報 |
+| 自動配信 | 初期OFF、毎日07:00 JST、アカウント／日本日付ごとに1回 |
+| 確認 | LINEクイックリプライpostback。既読状態を取得する機能ではない |
+| 通知 | 新着受信・自動配信結果・未確認者のサマリーをアプリ端末へWeb Push |
+| 管理 | LINE資格情報、受信／送信保存期間、追加外部情報ON/OFF |
+| 保存期間 | 受信既定90日、送信既定180日。新規保存時に期限を確定 |
 
-## 3. 初回リリース範囲
+画像・動画・音声の保存、アプリ内ユーザー登録、個別本文の生成、未確認者本人へのLINEリマインダー、送信失敗時の自動再送は実装範囲外。
 
-### 3.1 対象
+## 2. 認証とアカウント割当
 
-- LINE公式アカウント1つを対象にする。
-- 対象LINE公式アカウントへの1対1トークを保存する。
-- 対象LINE公式アカウントが参加しているグループトークを保存する。
-- テキストメッセージのみ保存・表示する。
-- 共有ID/パスワードで閲覧画面へログインできる。
-- 管理者ID/パスワードで管理画面へログインできる。
-- 管理者は保存期間、共有ID、共有パスワード、メッセージ削除を管理できる。
-- 保存期間を超えたメッセージは原則として一覧/APIで非表示にする。
-- ただし、履歴が少ない状態で空表示になることを避けるため、直近1000件は保存期間を超えていても表示対象に残す。
-- Vercel Cronで、直近1000件に含まれない期限切れメッセージを通常削除する。
+### 2.1 ログイン
 
-### 3.2 対象外
+1. クライアントがFirebase Web SDKでメール／パスワードログインする。
+2. IDトークンを`POST /api/auth/login`へ`{ "idToken": "..." }`として送る。
+3. サーバーがFirebase Admin SDKでトークンを検証し、`authUsers/{uid}`を取得・初回作成する。
+4. `status=active`かつ内部アカウントがある場合に`bbcafe_auth_v2` Cookieを発行する。
 
-- 画像、動画、音声、ファイル、スタンプ、位置情報の保存。
-- LINE公式アカウントの管理画面からの追加登録。
-- 複数共有IDの発行。
-- ユーザー個別アカウント登録。
-- メッセージへの返信機能。
-- 検索、タグ、既読管理。
-- CSV出力。
-- Firestore TTL。
-- Google Secret Manager。
+応答は`data`と`meta.requestId`を持つ。ログイン成功時の`data`は`authenticated`, `displayName`, `email`, `lineAccountId`。セッション照会は`GET /api/auth/session`、ログアウトは`POST /api/auth/logout`。
 
-## 4. 全体構成
+CookieはHMAC-SHA256署名付きで、payloadは`uid`, `email`, `lineAccountId`, `role: "account"`, `exp`。有効期限24時間、HttpOnly、SameSite=Lax、Path=/、本番ではSecure。署名鍵は`SESSION_SECRET`。
 
-```text
-LINE公式アカウント
-  -> LINE Messaging API Webhook
-  -> Vercel Route Handler
-  -> LineCredentialProvider
-  -> Firestore
-  -> Web閲覧画面
+`requireViewerSession`と`requireAdminSession`は両方ともこのアカウントCookieを検証する。現行UIではviewer/adminの権限分岐を行わず、ログインユーザーは自身のアカウントの管理機能も利用する。各APIのアカウントはCookieから決定し、クライアントから別アカウントを選ばせない。
 
-Vercel Cron
-  -> 削除API
-  -> Firestore通常削除
+旧`bbcafe_admin`／`bbcafe_viewer` Cookieは現行APIの認可に使わず、ログイン・ログアウト・セッション照会でクリアする。旧`/api/admin/login`と`/api/viewer/login`は`401 UNAUTHORIZED`と「このログイン方式は廃止されました。」を返す。旧session/logoutパスは互換用に残る。`hash-password`スクリプトと旧ハッシュ関連コードは残存するが、現行ログインの設定には不要。
 
-管理者
-  -> 管理画面
-  -> Firestore設定更新
-```
+### 2.2 初回割当
 
-## 5. LINEアカウントと秘匿情報管理
+`INITIAL_OWNER_UID`または正規化した`INITIAL_OWNER_EMAIL`に一致する初回ログインは、`INITIAL_LINE_ACCOUNT_ID`へ割り当てる。未設定時は`LINE_DEFAULT_ACCOUNT_ID`（既定`default`）。他の初回ユーザーは`user_<UIDのハッシュ先頭24文字>`へ割り当てる。`authUsers`と`lineAccounts`の作成はトランザクションで行う。既存`authUsers`の割当は変更しない。
 
-### 5.1 設計方針
+初回作成の`lineAccounts`には`ownerUid`、`status=active`、`retentionDays=90`を保存する。`RETENTION_DAYS`は既定アカウントの未保存値の補完にも使うが、初回作成値を上書きする設定ではない。
 
-初回は1アカウント固定のため、LINEチャネルの秘匿情報はVercel Environment Variablesに保存する。
+アプリ内に登録画面はなく、ユーザー作成はFirebase Consoleで行う。パスワード再設定メールはFirebase Web SDKから送り、登録有無を断定しない文言を表示する。
 
-ただし、将来の複数アカウント追加を考慮し、実装ではLINEチャネル情報の取得処理を直接 `process.env` に依存させない。
+### 2.3 認証の境界
 
-以下の責務を持つ取得層を用意する。
+現行の保護APIはCookieの署名・期限を確認する方式であり、各リクエストでFirebaseトークンや`authUsers.status`を再照会する方式ではない。Firebase側の無効化が既発行Cookieへ即時反映される保証はない。複数ユーザーの同一LINEチャネル所有をアプリの登録UIで提供していないが、Channel IDの全アカウント一意性を検証する処理もない。
 
-```text
-LineCredentialProvider
-  - lineAccountId から channelSecret を取得する
-  - lineAccountId から channelAccessToken を取得する
-  - 取得元が env か encryptedFirestore かを隠蔽する
-```
+## 3. LINE資格情報
 
-### 5.2 初回MVPの保存方式
-
-Vercel Environment Variables:
-
-```env
-LINE_DEFAULT_ACCOUNT_ID=default
-LINE_CHANNEL_ID=<line-channel-id>
-LINE_CHANNEL_SECRET=<line-channel-secret>
-LINE_CHANNEL_ACCESS_TOKEN=<line-channel-access-token>
-```
-
-Firestore:
-
-```text
-lineAccounts/default
-  lineAccountId: "default"
-  displayName: "<LINE公式アカウント表示名>"
-  credentialProvider: "env"
-  channelId: "<line-channel-id>"
-  channelSecretRef: "LINE_CHANNEL_SECRET"
-  channelAccessTokenRef: "LINE_CHANNEL_ACCESS_TOKEN"
-  retentionDays: 90
-  viewerSharedId: "<任意文字列>"
-  viewerPasswordHash: "<pbkdf2 hash>"
-  status: "active"
-  createdAt
-  updatedAt
-```
-
-Firestoreには `channelSecret` と `channelAccessToken` の平文を保存しない。
-
-### 5.3 将来の複数アカウント対応
-
-管理画面からLINE公式アカウントを追加する場合は、Vercel Environment Variablesではなく、暗号化した秘匿情報をFirestoreに保存する。
-
-将来用Firestore例:
-
-```text
-lineAccounts/{lineAccountId}
-  lineAccountId
-  displayName
-  credentialProvider: "encryptedFirestore"
-  channelId
-  retentionDays
-  viewerSharedId
-  viewerPasswordHash
-  status
-  createdAt
-  updatedAt
-
-lineAccounts/{lineAccountId}/credentials/current
-  encryptedChannelSecret
-  encryptedChannelAccessToken
-  encryptionKeyVersion
-  createdAt
-  updatedAt
-```
-
-将来用Vercel Environment Variables:
-
-```env
-APP_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
-APP_ENCRYPTION_KEY_VERSION=v1
-```
-
-暗号化方式の候補:
-
-```text
-AES-256-GCM
-```
-
-保存値:
-
-```text
-encrypted value = base64(iv).base64(ciphertext).base64(authTag)
-```
-
-注意:
-
-- Firestoreには平文を保存しない。
-- 復号キーはVercel Environment Variablesに保存する。
-- `APP_ENCRYPTION_KEY` とFirestoreの両方が漏えいした場合は復号され得る。
-- Secret Managerより防御層は薄いが、無料枠運用と管理画面追加の両立を優先する。
-
-### 5.4 Webhook URL
-
-複数アカウント対応に備え、初回からURLに `lineAccountId` を含める。
-
-```text
-POST /api/line/webhook/{lineAccountId}
-```
-
-初回例:
-
-```text
-POST /api/line/webhook/default
-```
-
-理由:
-
-- Webhook署名検証には対象チャネルの `channelSecret` が必要。
-- 署名検証前に対象アカウントを特定する必要がある。
-- 将来、LINE公式アカウントごとにWebhook URLを分けられる。
-
-## 6. 認証・セッション設計
-
-### 6.1 共通方針
-
-Firebase Authは使わず、初回はサーバーCookie方式を採用する。
-
-理由:
-
-- 閲覧者は個人メールや個別アカウント登録なしで利用する。
-- 共有IDが任意文字列であり、Firebase Authのメール/パスワード方式と相性が悪い。
-- Firestoreをクライアントから直接読ませず、Route Handler経由にすることで認可を一元化する。
-
-### 6.2 Cookie仕様
-
-```text
-httpOnly: true
-secure: production only true
-sameSite: "lax"
-path: "/"
-maxAge: 24h
-```
-
-Cookie値:
-
-```text
-base64url(JSON payload).base64url(HMAC-SHA256 signature)
-```
-
-署名:
-
-```text
-SESSION_SECRET を使った HMAC-SHA256
-```
-
-### 6.3 閲覧者セッション
-
-Payload:
-
-```json
-{
-  "role": "viewer",
-  "lineAccountId": "default",
-  "exp": 1770000000
-}
-```
-
-閲覧者に許可する操作:
-
-- メッセージ一覧取得。
-- メッセージ詳細取得。
-- ログアウト。
-
-閲覧者に許可しない操作:
-
-- メッセージ削除。
-- 保存期間変更。
-- 共有ID/パスワード変更。
-- LINEアカウント設定変更。
-
-### 6.4 管理者セッション
-
-Payload:
-
-```json
-{
-  "role": "admin",
-  "exp": 1770000000
-}
-```
-
-管理者に許可する操作:
-
-- 管理画面閲覧。
-- 保存期間変更。
-- 共有ID/パスワード変更。
-- メッセージ手動削除。
-- 自動削除ログ確認。
-- 将来のLINEアカウント追加。
-
-### 6.5 管理者ID/パスワード
-
-`tennis-matchup-app` の管理認証方針を踏襲する。
-
-Vercel Environment Variables:
-
-```env
-ADMIN_LOGIN_ID=<admin-id>
-ADMIN_PASSWORD_HASH=<pbkdf2 password hash>
-SESSION_SECRET=<random secret>
-```
-
-ログイン時:
-
-```text
-1. request body から adminId / password を取得
-2. ADMIN_LOGIN_ID と adminId を比較
-3. ADMIN_PASSWORD_HASH と password をPBKDF2検証
-4. 成功時に role=admin のCookieを発行
-5. 失敗時は401
-```
-
-### 6.6 共有ID/パスワード
-
-Firestore:
-
-```text
-lineAccounts/{lineAccountId}
-  viewerSharedId
-  viewerPasswordHash
-```
-
-ログイン時:
-
-```text
-1. request body から sharedId / password を取得
-2. lineAccounts の active アカウントを取得
-3. viewerSharedId と sharedId を比較
-4. viewerPasswordHash と password をPBKDF2検証
-5. 成功時に role=viewer + lineAccountId のCookieを発行
-6. 失敗時は401
-```
-
-初回は1アカウント固定のため、共有IDの検索対象は `lineAccounts/default` とする。
-
-将来複数アカウント化する場合は、共有IDの一意性を保証するために以下を追加する。
-
-```text
-viewerSharedIdIndex/{normalizedSharedId}
-  lineAccountId
-  createdAt
-```
-
-## 7. パスワードハッシュ方式
-
-### 7.1 保存形式
-
-```text
-pbkdf2:sha256:<iterations>:<base64-salt>:<base64-hash>
-```
-
-例:
-
-```text
-pbkdf2:sha256:210000:xxxxxxxx:yyyyyyyy
-```
-
-### 7.2 検証方針
-
-- Node.js標準 `crypto.pbkdf2` を使用する。
-- 平文パスワードは保存しない。
-- 比較は可能な限り timing-safe な比較を使う。
-- 不正形式のhashは認証失敗として扱う。
-
-### 7.3 生成方法
-
-MVPでは管理用スクリプトでhashを生成し、以下へ設定する。
-
-```text
-ADMIN_PASSWORD_HASH
-lineAccounts/{lineAccountId}.viewerPasswordHash
-```
-
-将来、管理画面で共有パスワードを変更する場合も、保存するのはhashのみとする。
-
-## 8. Firestoreデータ設計
-
-### 8.1 Collections
-
-```text
-lineAccounts/{lineAccountId}
-messages/{messageId}
-viewerSessions?          // 初回は使用しない
-adminLoginGuards/{guardId}
-auditLogs/{logId}
-cronRuns/{runId}
-```
-
-### 8.2 lineAccounts
-
-```json
-{
-  "lineAccountId": "default",
-  "displayName": "BB Cafe LINE",
-  "credentialProvider": "env",
-  "channelId": "1234567890",
-  "channelSecretRef": "LINE_CHANNEL_SECRET",
-  "channelAccessTokenRef": "LINE_CHANNEL_ACCESS_TOKEN",
-  "retentionDays": 90,
-  "viewerSharedId": "bb-cafe",
-  "viewerPasswordHash": "pbkdf2:sha256:...",
-  "status": "active",
-  "createdAt": "...",
-  "updatedAt": "..."
-}
-```
-
-制約:
-
-- `retentionDays` のデフォルトは90日。
-- `retentionDays` は1以上の整数。
-- 変更後に受信したメッセージから新しい保存期間を適用する。
-- 既存メッセージの `expiresAt` は原則変更しない。
-
-### 8.3 messages
-
-```json
-{
-  "messageId": "msg_xxx",
-  "lineAccountId": "default",
-  "webhookEventId": "01H...",
-  "lineMessageId": "line-message-id",
-  "sourceType": "user",
-  "sourceUserId": "Uxxxxxxxx",
-  "sourceGroupId": null,
-  "sourceGroupName": null,
-  "sourceUserDisplayName": "山田太郎",
-  "senderDisplayName": "山田太郎",
-  "text": "こんにちは",
-  "messageType": "text",
-  "sentAt": "...",
-  "receivedAt": "...",
-  "expiresAt": "...",
-  "createdAt": "..."
-}
-```
-
-グループ投稿例:
-
-```json
-{
-  "sourceType": "group",
-  "sourceUserId": "Uxxxxxxxx",
-  "sourceGroupId": "Cxxxxxxxx",
-  "sourceGroupName": "ユーザグループ",
-  "sourceUserDisplayName": "山田太郎",
-  "senderDisplayName": "山田太郎"
-}
-```
-
-制約:
-
-- `webhookEventId` は重複排除に使う。
-- 表示順は `sentAt desc` を基準にする。
-- 一覧/APIの表示対象は `expiresAt > now` のメッセージと、`sentAt desc` の直近1000件の和集合とする。
-- 自動削除前でも、直近1000件に含まれない期限切れメッセージはAPIレスポンスに含めない。
-
-### 8.4 auditLogs
-
-```json
-{
-  "logId": "log_xxx",
-  "type": "viewer_login_success",
-  "actor": "viewer",
-  "lineAccountId": "default",
-  "requestId": "req_xxx",
-  "result": "success",
-  "message": "Viewer login succeeded",
-  "createdAt": "..."
-}
-```
-
-保存対象:
-
-- 管理者ログイン成功/失敗。
-- 閲覧者ログイン成功/失敗。
-- 管理者による設定変更。
-- 管理者による手動削除。
-- 自動削除実行結果。
-- Webhook署名検証失敗。
-
-保存しない情報:
-
-- パスワード平文。
-- LINE channel secret。
-- LINE channel access token。
-- Cookie値。
-
-### 8.5 cronRuns
-
-```json
-{
-  "runId": "cron_20260526",
-  "type": "delete_expired_messages",
-  "startedAt": "...",
-  "finishedAt": "...",
-  "totalMessageCount": 1200,
-  "expiredMessageCount": 150,
-  "deletedCount": 150,
-  "skippedReason": null,
-  "status": "success"
-}
-```
-
-## 9. LINE Webhook設計
-
-### 9.1 Endpoint
-
-```text
-POST /api/line/webhook/{lineAccountId}
-```
-
-### 9.2 処理フロー
-
-```text
-1. lineAccountId をURLから取得
-2. LineCredentialProvider で channelSecret を取得
-3. raw body と x-line-signature で署名検証
-4. JSONを解析
-5. events を順に処理
-6. message.type === "text" のみ保存
-7. source.type が user / group のどちらでも保存
-8. webhookEventId で重複排除
-9. 取消イベントは対象メッセージを削除
-10. LINEへ短時間で200を返す
-```
-
-### 9.3 保存対象イベント
-
-対象:
-
-```text
-event.type = "message"
-event.message.type = "text"
-```
-
-対象外:
-
-```text
-image
-video
-audio
-file
-sticker
-location
-follow
-join
-leave
-postback
-```
-
-対象外イベントは保存しないが、必要に応じてデバッグログには種別のみ残す。
-
-### 9.4 取消イベント
-
-対象:
-
-```text
-event.type = "unsend"
-```
-
-処理:
-
-```text
-1. lineMessageId を取得
-2. messages から該当ドキュメントを検索
-3. 該当メッセージを削除
-4. 見つからない場合は成功扱い
-```
-
-理由:
-
-- 送信者の取消意図を尊重する。
-- 取消済み本文を画面に残さない。
-
-### 9.5 送信者名取得
-
-1対1:
-
-```text
-source.userId からプロフィールを取得する
-```
-
-グループ:
-
-```text
-source.groupId + source.userId からグループメンバープロフィールを取得する
-```
-
-失敗時:
-
-```text
-sourceUserDisplayName = "不明なユーザー"
-senderDisplayName = "不明なユーザー"
-```
-
-送信者のUser ID（`sourceUserId`）と表示名（`sourceUserDisplayName` / `senderDisplayName`）は投稿時点の値として固定保存する。
-
-### 9.6 グループ名取得
-
-グループ投稿時はLINE APIでグループ名の取得を試行する。
-
-取得失敗時:
-
-```text
-sourceGroupName = "ユーザグループ"
-```
-
-グループ名を取得できない場合も、グループ投稿の表示名は必ず `"ユーザグループ"` とする。
-
-## 10. API設計
-
-### 10.1 閲覧者API
-
-```text
-POST /api/viewer/login
-POST /api/viewer/logout
-GET  /api/viewer/session
-GET  /api/messages
-GET  /api/messages/{messageId}
-```
-
-### 10.2 管理者API
-
-```text
-POST   /api/admin/login
-POST   /api/admin/logout
-GET    /api/admin/session
-GET    /api/admin/settings
-PATCH  /api/admin/settings
-DELETE /api/admin/messages/{messageId}
-GET    /api/admin/messages
-GET    /api/admin/cron-runs
-```
-
-### 10.3 Cron API
-
-```text
-GET /api/cron/delete-expired-messages
-```
-
-Request header:
-
-```http
-Authorization: Bearer <CRON_SECRET>
-```
-
-### 10.4 共通レスポンス
-
-成功:
-
-```json
-{
-  "data": {},
-  "meta": {
-    "requestId": "req_xxx"
-  }
-}
-```
-
-失敗:
-
-```json
-{
-  "error": {
-    "code": "UNAUTHORIZED",
-    "message": "認証が必要です。"
-  },
-  "meta": {
-    "requestId": "req_xxx"
-  }
-}
-```
-
-### 10.5 エラーコード
-
-| Status | Code | 用途 |
-| ---: | --- | --- |
-| 400 | `INVALID_JSON` | JSON解析失敗 |
-| 400 | `BAD_REQUEST` | 必須項目不足 |
-| 401 | `UNAUTHORIZED` | 未ログイン、認証失敗 |
-| 403 | `FORBIDDEN` | 権限不足 |
-| 404 | `NOT_FOUND` | 対象なし |
-| 409 | `CONFLICT` | 重複などの競合 |
-| 422 | `VALIDATION_ERROR` | 入力値不正 |
-| 429 | `RATE_LIMITED` | ログイン試行制限 |
-| 500 | `INTERNAL_SERVER_ERROR` | 想定外エラー |
-| 503 | `SERVICE_UNAVAILABLE` | 設定不足、Firestore障害 |
-
-## 11. UI設計
-
-### 11.1 閲覧者ログイン
-
-表示項目:
-
-- 共有ID入力。
-- パスワード入力。
-- ログインボタン。
-- 認証失敗メッセージ。
-
-### 11.2 メッセージ一覧
-
-表示項目:
-
-- 送信者。
-- 送信時刻。
-- トーク種別。
-- グループ名または個別トーク。
-- 本文概要。
-
-並び順:
-
-```text
-sentAt desc
-```
-
-更新:
-
-- 30秒ごとの自動再取得。
-- 手動更新ボタン。
-
-空状態:
-
-```text
-表示できるメッセージはありません。
-```
-
-### 11.3 メッセージ詳細
-
-表示項目:
-
-- 本文全文。
-- 送信者。
-- 送信時刻。
-
-初回対象外:
-
-- 返信。
-- 添付プレビュー。
-- 監査情報表示。
-
-### 11.4 管理画面
-
-表示項目:
-
-- 保存期間。
-- 共有ID。
-- 共有パスワード変更。
-- メッセージ一覧。
-- メッセージ削除。
-- 自動削除履歴。
-
-削除操作:
-
-- 管理者のみ実行可能。
-- 削除前に確認ダイアログを表示する。
-- 削除後は一覧から消す。
-
-## 12. 自動削除設計
-
-### 12.1 方針
-
-Firestore TTLは使わない。
-
-Vercel Cronで日次実行し、直近1000件に含まれない期限切れメッセージを通常のFirestore deleteで削除する。
-
-### 12.2 実行条件
-
-```text
-1日1回
-```
-
-Vercel Cronから以下を呼び出す。
-
-```text
-GET /api/cron/delete-expired-messages
-```
-
-### 12.3 削除条件
-
-```text
-expiresAt <= now
-```
-
-ただし、以下は削除対象から除外する。
-
-```text
-sentAt desc の直近1000件
-```
-
-直近1000件の境界に同一 `sentAt` のメッセージが複数ある場合は、誤削除を避けるため境界と同一 `sentAt` のメッセージも保護対象に含める。
-
-### 12.4 削除上限
-
-```text
-最大 10000件/日
-```
-
-1回のCron実行で最大10000件まで削除する。
-
-### 12.5 処理フロー
-
-```text
-1. Authorization Bearer を検証
-2. `sentAt desc` で直近1000件を確認し、保護境界の `sentAt` を決める
-3. 総数が1000件以下なら全件を保護対象として skipped 終了
-4. `expiresAt <= now` かつ直近1000件に含まれないメッセージを `sentAt asc` で取得
-5. 最大10000件まで削除
-6. cronRuns に結果を保存
-7. 削除件数、保護件数、スキップ理由、失敗件数をログ出力
-```
-
-### 12.6 表示との関係
-
-直近1000件は、期限切れであっても物理削除しない。
-
-閲覧者APIと管理者APIの通常一覧では、以下の和集合を表示対象にする。
-
-```text
-expiresAt > now
-OR sentAt desc の直近1000件
-```
-
-これにより、通常は保存期間を超えた古いメッセージを非表示にしつつ、履歴が少ない状態や直近履歴として必要な範囲では空表示を避ける。
-
-## 13. 環境変数
-
-```env
-FIREBASE_PROJECT_ID=<project-id>
-FIREBASE_CLIENT_EMAIL=<service-account-email>
-FIREBASE_PRIVATE_KEY=<service-account-private-key>
-
-ADMIN_LOGIN_ID=<admin-id>
-ADMIN_PASSWORD_HASH=<pbkdf2 password hash>
-SESSION_SECRET=<random secret>
-
-LINE_DEFAULT_ACCOUNT_ID=default
-LINE_CHANNEL_ID=<line-channel-id>
-LINE_CHANNEL_SECRET=<line-channel-secret>
-LINE_CHANNEL_ACCESS_TOKEN=<line-channel-access-token>
-
-CRON_SECRET=<random secret>
-```
-
-将来の暗号化Firestore保存で追加:
-
-```env
-APP_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
-APP_ENCRYPTION_KEY_VERSION=v1
-```
-
-## 14. セキュリティ設計
-
-### 14.1 必須対策
-
-- LINE Webhook署名を検証する。
-- 不正署名のWebhookは保存しない。
-- Firestoreはクライアントから直接読ませない。
-- Route Handlerで認証・認可を行う。
-- CookieはHttpOnlyにする。
-- Cookie値はHMAC署名し、改ざんを検出する。
-- パスワード平文を保存しない。
-- LINEチャネル秘匿情報をログに出さない。
-- `CRON_SECRET` 不一致では削除しない。
-- 管理者以外は削除できない。
-
-### 14.2 ログに出さない情報
-
-- パスワード平文。
-- パスワードhashの全量。
-- LINE channel secret。
-- LINE channel access token。
-- Cookie値。
-- Webhook raw bodyの全量。
-
-### 14.3 ログに出す情報
-
-- requestId。
-- endpoint。
-- status。
-- lineAccountId。
-- event type。
-- message type。
-- deletedCount。
-- skippedReason。
-
-本文ログは原則出さない。
-
-## 15. 実装順
-
-1. 詳細設計書を追加する。
-2. Next.jsアプリの初期構成を確認または作成する。
-3. Firebase Admin SDK接続層を作る。
-4. crypto helperを作る。
-5. session cookie helperを作る。
-6. LineCredentialProviderを作る。
-7. 管理者ログインAPIを作る。
-8. 閲覧者ログインAPIを作る。
-9. LINE Webhook APIを作る。
-10. メッセージ一覧/詳細APIを作る。
-11. 管理画面APIを作る。
-12. Vercel Cron削除APIを作る。
-13. 閲覧画面を作る。
-14. 管理画面を作る。
-15. テストを追加する。
-16. 本番ビルドを確認する。
-
-## 16. テスト設計
-
-### 16.1 テスト観点一覧
-
-機能観点:
-
-- LINE 1対1テキストメッセージを保存できること。
-- LINE グループテキストメッセージを保存できること。
-- 新着順で一覧表示できること。
-- 詳細で本文全文を表示できること。
-- 30秒ごとの再取得ができること。
-- 手動更新ができること。
-- 管理者がメッセージを削除できること。
-- Vercel Cronで期限切れメッセージを削除できること。
-
-非機能観点:
-
-- Webhookが短時間で応答すること。
-- LINE署名不正を拒否できること。
-- Cookie改ざんを拒否できること。
-- Firestore障害時にfail closedできること。
-- 無料枠運用を前提に削除上限を守ること。
-- 同一実行環境で削除処理が重複実行されても破綻しないこと。
-
-データ観点:
-
-- `user` source と `group` source の差異を保存できること。
-- 送信者名が投稿時点で固定されること。
-- グループ名取得失敗時に `ユーザグループ` が保存されること。
-- `webhookEventId` で重複排除できること。
-- `expiresAt` が保存期間から正しく計算されること。
-- 直近1000件に含まれない期限切れデータが一覧/APIに表示されないこと。
-
-UI観点:
-
-- 共有ID/パスワードのログイン失敗が分かること。
-- 空一覧が分かること。
-- 長文が崩れず表示されること。
-- グループ投稿と個別投稿を区別できること。
-- モバイル幅でも送信者、時刻、本文概要が読めること。
-- 削除後に一覧から消えること。
-
-### 16.2 正常系
-
-| Case | 対象 | 意図 |
-| --- | --- | --- |
-| N-001 | Webhook | 1対1のテキストメッセージを保存できる |
-| N-002 | Webhook | グループのテキストメッセージを保存できる |
-| N-003 | Webhook | グループ名取得失敗時に `ユーザグループ` を保存する |
-| N-004 | 閲覧ログイン | 正しい共有ID/パスワードでログインできる |
-| N-005 | 管理ログイン | 正しい管理者ID/パスワードでログインできる |
-| N-006 | 一覧 | `sentAt desc` で新着順表示できる |
-| N-007 | 詳細 | 本文全文、送信者、送信時刻を表示できる |
-| N-008 | 手動更新 | 更新ボタンで最新状態を取得できる |
-| N-009 | 自動更新 | 30秒ごとに再取得できる |
-| N-010 | 管理削除 | 管理者がメッセージを削除できる |
-| N-011 | 自動削除 | 直近1000件に含まれない期限切れメッセージを削除できる |
-
-### 16.3 異常系
-
-| Case | 対象 | 意図 |
-| --- | --- | --- |
-| E-001 | Webhook | LINE署名不正なら保存しない |
-| E-002 | Webhook | 未対応メッセージ種別は保存しない |
-| E-003 | Webhook | Firestore保存失敗時にエラーログを残す |
-| E-004 | Webhook | 重複 `webhookEventId` を二重保存しない |
-| E-005 | 閲覧ログイン | 共有ID不一致なら拒否する |
-| E-006 | 閲覧ログイン | 共有パスワード不一致なら拒否する |
-| E-007 | 管理ログイン | 管理者ID不一致なら拒否する |
-| E-008 | 管理ログイン | 管理者パスワード不一致なら拒否する |
-| E-009 | Cookie | Cookie改ざん時に未ログイン扱いにする |
-| E-010 | Cron | `CRON_SECRET` 不一致なら削除しない |
-| E-011 | Cron | Firestore削除失敗時に失敗件数を記録する |
-
-### 16.4 境界値
-
-| Case | 対象 | 意図 |
-| --- | --- | --- |
-| B-001 | 保存期間 | `retentionDays=1` で `expiresAt` を計算できる |
-| B-002 | 保存期間 | `retentionDays=90` をデフォルトとして扱う |
-| B-003 | 自動削除 | 総数999件では全件が保護され削除しない |
-| B-004 | 自動削除 | 総数1000件では全件が保護され削除しない |
-| B-005 | 自動削除 | 総数1001件以上で直近1000件外の期限切れを削除対象にする |
-| B-006 | 自動削除 | 削除対象10000件まで削除する |
-| B-007 | 自動削除 | 削除対象10001件以上でも10000件までに制限する |
-| B-008 | 自動削除 | 直近1000件の境界と同一 `sentAt` のメッセージを保護する |
-| B-009 | 一覧 | 同一 `sentAt` の投稿でも安定して表示できる |
-| B-010 | 本文 | 長文テキストがUIを壊さない |
-
-### 16.5 状態遷移
-
-| Flow | 意図 |
+| 保存方式 | 用途 |
 | --- | --- |
-| 未受信 -> 受信済み | Webhook受信後に一覧へ出る |
-| 受信済み -> 詳細表示 | 一覧から詳細へ遷移できる |
-| 受信済み -> 期限切れ | `expiresAt <= now` かつ直近1000件外になると一覧から消える |
-| 期限切れ -> 自動削除済み | 直近1000件外の期限切れメッセージがCronで物理削除される |
-| 受信済み -> 手動削除済み | 管理者削除で一覧から消える |
-| 受信済み -> 取消削除済み | unsendイベントで削除される |
-| ログイン済み -> セッション期限切れ | 24時間後に再ログインが必要になる |
+| `env` | 既定アカウントの`LINE_CHANNEL_SECRET`／`LINE_CHANNEL_ACCESS_TOKEN` |
+| `encryptedFirestore` | アカウント別の暗号化資格情報 |
 
-### 16.6 実行順序・依存関係
+保存先は`lineAccounts/{lineAccountId}/credentials/current`。`encryptedChannelSecret`, `encryptedChannelAccessToken`, `encryptionKeyVersion`, `updatedAt`を保持し、`APP_ENCRYPTION_KEY`を使ったAES-256-GCMで暗号化する。鍵は32バイトのBase64、バージョンは既定`v1`。
 
-- Webhook保存テストは署名検証、イベント分類、保存処理を分けて検証する。
-- 一覧/詳細テストはFirestoreへ既知データを投入してから実行する。
-- Cron削除テストは総数条件と期限切れ条件を分けて実行する。
-- 管理者削除とCron削除は同じメッセージに対して競合しても成功扱いにできるようにする。
-- 通しテストでは、受信 -> 一覧 -> 詳細 -> 削除 -> 一覧非表示まで確認する。
+管理画面ではChannel ID、Secret、Tokenを入力する。SecretとTokenは両方必要で、TokenによるLINE bot情報取得が成功してから保存する。表示名はbot情報から取得し、自由編集しない。Channel ID変更時は資格情報の再入力が必要。資格情報を空欄にして保存する場合、既存値を維持する。
 
-### 16.7 証跡
+APIは設定済みフラグとToken検証日時を返し、秘密値を返さない。Secret自体の正しさはWebhook署名検証で確認する。`webhookVerifiedAt`はアカウントデータへ記録するが、現行の共通設定レスポンスには含めていない。
 
-失敗時に取得する情報:
+## 4. Firestoreデータ
 
-- requestId。
-- endpoint。
-- HTTP status。
-- error code。
-- lineAccountId。
-- sourceType。
-- messageType。
-- webhookEventId。
-- sentAt。
-- expiresAt。
-- cron runId。
-- deletedCount。
-- skippedReason。
+| パス | 内容・主な項目 |
+| --- | --- |
+| `authUsers/{uid}` | `uid`, `email`, `lineAccountId`, `status`, 作成・更新時刻 |
+| `lineAccounts/{lineAccountId}` | `ownerUid`, `channelId`, `displayName`, `credentialProvider`, `retentionDays`, `status`, Token検証・Webhook確認時刻 |
+| `lineAccounts/{lineAccountId}/credentials/current` | 暗号化Secret／Token、鍵バージョン |
+| `messages/{messageId}` | 内部アカウント、LINEメッセージID、WebhookイベントID、送信元、本文、`sentAt`, `receivedAt`, `expiresAt` |
+| `lineAccounts/{lineAccountId}/users/{userId}` | 表示名、`broadcastSelected`、初回・最終確認・最終受信時刻 |
+| `lineAccounts/{lineAccountId}/automationSettings/dailyBroadcast` | 自動配信ON/OFF、送信保存期間、固定時刻、外部情報設定、感染症表示履歴 |
+| `lineAccounts/{lineAccountId}/calendarEvents/{eventId}` | 月日、イベント文、有効状態、並び順 |
+| `lineAccounts/{lineAccountId}/sendRuns/{runId}` | 配信本文、手動／自動、成功／失敗数、送信先スナップショット、確認状態、保存期限 |
+| `lineAccounts/{lineAccountId}/confirmationTargets/{userId}` | ユーザごとの最新成功配信のrunId、確認状態、確認／通知時刻 |
+| `lineAccounts/{lineAccountId}/confirmationReminderRuns/{runId}` | 確認チェック結果、確認済／未確認対象、Push結果 |
+| `cronRuns/{runId}` | アカウント別の受信削除履歴、保護数、削除数、結果 |
+| `pushSubscriptions/{subscriptionId}` | 内部アカウント、通知endpoint、鍵 |
 
-取得しない情報:
+日時は保存時にFirestore Timestampへ変換し、APIではISO文字列として返す。受信メッセージIDはWebhookイベントIDのハッシュから決定し、再配信されたイベントの重複保存と新着通知を抑える。
 
-- パスワード平文。
-- LINEチャネル秘匿情報。
-- Cookie値。
+受信・送信履歴は1ページ既定20件、最大50件で`nextCursor`による追加読み込みを行う。現行カーソルは送信時刻であり、同一時刻の大量データについて完全なページ境界を保証する複合カーソルではない。
 
-## 17. 未決事項
+FirestoreはAdmin SDKからのみアクセスし、クライアントの直接アクセスは`firestore.rules`で拒否する。複合indexは`firestore.indexes.json`をデプロイする。
 
-以下は実装開始時に確定する。
+## 5. LINE Webhookとユーザ情報
 
-- Next.jsのバージョン。
-- Firestore project ID。
-- Vercel project名。
-- 初期管理者ID。
-- 初期共有ID。
-- PBKDF2 iterations。
-- 管理画面のPC専用制限を入れるかどうか。
+`POST /api/line/webhook/{lineAccountId}`で受ける。URLの値は内部アカウントIDでありChannel IDではない。Raw bodyとChannel Secretを使って`x-line-signature`を検証する。
 
-## 18. 受け入れ条件
+| イベント | 処理 |
+| --- | --- |
+| テキスト`message` | 送信元プロフィールを取得、ユーザ情報upsert、メッセージ保存、新規保存時だけWeb Push |
+| `follow` | ユーザ情報upsert。初期の配信選択はOFF |
+| `unsend` | 同アカウント・LINEメッセージIDの受信履歴を削除 |
+| 確認`postback` | postback内のuserIdと実際の送信元が一致する場合、確認状態を更新 |
+| その他 | 無視。非テキスト本文は保存しない |
 
-- LINE公式アカウントへの1対1テキスト投稿がWebアプリに表示される。
-- LINE公式アカウントを追加したグループのテキスト投稿がWebアプリに表示される。
-- グループ投稿ではグループ名または `ユーザグループ` が表示される。
-- 一覧が送信時刻の新着順で表示される。
-- 詳細で本文全文、送信者、送信時刻が表示される。
-- 共有ID/パスワードなしでは閲覧できない。
-- 管理者ID/パスワードなしでは管理画面を操作できない。
-- 閲覧者は削除できない。
-- 管理者はメッセージを削除できる。
-- 直近1000件に含まれない期限切れメッセージは一覧/APIに表示されない。
-- 直近1000件は期限切れであっても一覧/APIに表示され、物理削除されない。
-- Vercel Cronで直近1000件外の期限切れメッセージを通常削除できる。
-- 総数999件、1000件では自動削除しない。
-- 総数1001件以上では、直近1000件外の削除対象を最大10000件/日まで削除する。
-- LINEチャネル秘匿情報、パスワード平文、Cookie値がログやFirestoreに平文保存されない。
+グループ・複数人トークは画面上`group`として扱う。名前取得失敗時は代替表示名で保存する。
+
+ユーザ情報は受信履歴と独立して保存し、受信履歴削除では消さない。既存受信からのbackfill、友だち一覧取り込みでも補完できる。取り込みはLINE APIが許可する範囲であり、取得不能なユーザーまで列挙できる保証はない。
+
+## 6. 作成と配信
+
+### 6.1 共通生成処理
+
+手動作成と自動配信は`generateDailyGreetingMessage()`を使う。日本時間の日付に対応した天気・カレンダー・誕生花・直近の冒頭文・注意情報を入力にする。モデル既定値と設定は[Gemini設計](./gemini-3.5-flash-lite-migration-design.md)、外部情報の選定・失敗時の縮退は[v2.0.0要件](./requirements-v2.0.0.md)を参照する。
+
+外部情報OFFでも通常の気象庁天気とWBGT予測は利用する。追加の感染症週報、熱中症アラート、愛知県注意報をOFFにする設定である。警報・特別警報は取得・構造化するが、通常挨拶の注意報表示と緊急通知は別の範囲。
+
+### 6.2 配信対象と履歴
+
+`broadcastSelected=true`を永続化された正式な配信対象とする。手動送信の`userIds`はその集合から今回送る一部を選択するための値であり、未選択ユーザや別アカウントへ送ることはできない。未指定なら正式な対象全員、空配列や対象外IDは400。
+
+LINE Pushは送信先ごとに逐次実行する。1回の配信を1件の`sendRun`に保存し、本文・ユーザ名・結果をスナップショットにする。結果は`success`, `partial_failed`, `failed`。成功対象は`pending`、失敗対象は`not_required`として確認対象を区別する。
+
+### 6.3 自動配信
+
+`enabled=false`ならスキップする。有効時は`auto_{lineAccountId}_{yyyyMMdd}`を作成予約してから生成・配信する。同じrunIdが存在すれば`already_ran`。対象0件、生成失敗、配信失敗でも予約済みの同日runIdを自動再利用しない。初期予約は`status=failed`、`finishedAt=null`であり、中断時はこの状態が残り得る。
+
+送信時刻は画面で変更できず、`vercel.json`と表示用固定時刻を変更して再デプロイする。送信結果は本文を含めないWeb Pushサマリーを通知し、クリックで`/sent`へ移動する。
+
+## 7. 確認状態とWeb Push
+
+「確認したよ👍」のpostbackにrunIdとuserIdを含める。最新成功配信の確認対象はユーザ単位で上書きする。古いボタン押下は古いsendRunを更新しても、最新runIdが異なる確認対象を変更しない。
+
+状態は`pending -> confirmed`、`pending -> reminded -> confirmed`。`reminded`も未確認表示に含む。ホームの「未確認をリセット」は、アプリ利用者が最新の未確認対象と対応する履歴を確認済みへ更新する操作であり、LINE側の押下を意味しない。
+
+確認チェックは13:00 JSTに最新対象を集計し、`pending`があれば同アカウントのアプリ通知登録端末へWeb Pushする。送信から6時間の経過判定と未確認者本人へのLINE再送は行わない。
+
+現行処理ではVAPID未設定の`missing_web_push_config`なら`pending`を維持する。一方、Push処理がスキップされなければ、購読0件や全件送信失敗でも`reminded`へ更新する。したがって「通知済み」は端末への到達を保証しない。詳細は[確認仕様](./confirmation-reminder-spec.md)。
+
+新着Pushは本文を含めず、登録端末だけへ通知する。購読endpointが404／410なら削除する。通知許可、Service Worker、HTTPS等のブラウザ条件に依存する。
+
+## 8. API一覧
+
+`account`は`bbcafe_auth_v2`による本人の内部アカウント認証。認証不要APIでも、Firebaseトークン・署名・Cron秘密値など個別の検証を行う。
+
+| Method | Path | 認証・用途 |
+| --- | --- | --- |
+| POST | `/api/auth/login` | Firebase IDトークンからCookie発行 |
+| POST | `/api/auth/logout` | Cookieクリア |
+| GET | `/api/auth/session` | 現行セッション照会 |
+| GET | `/api/app-version` | バージョン取得 |
+| GET | `/api/messages` | account、受信履歴ページ取得 |
+| GET | `/api/messages/{messageId}` | account、受信詳細 |
+| GET | `/api/users` | account、ユーザ取得・補完 |
+| GET | `/api/users/summary` | account、選択人数 |
+| PATCH | `/api/users/{userId}` | account、配信選択保存 |
+| POST | `/api/users/import-line-followers` | account、LINE友だち取り込み |
+| GET | `/api/sent-messages` | account、送信履歴ページ取得 |
+| GET | `/api/sent-messages/{runId}` | account、配信詳細 |
+| GET / POST | `/api/calendar-events` | account、一覧・当日イベント取得／追加 |
+| PATCH / DELETE | `/api/calendar-events/{eventId}` | account、編集／削除 |
+| GET / PATCH | `/api/message-assistant/automation-settings` | account、自動配信設定 |
+| POST | `/api/message-assistant/generate` | account、挨拶文作成 |
+| POST | `/api/message-assistant/send` | account、手動配信 |
+| GET / POST | `/api/confirmation-targets` | account、最新未確認対象取得／手動リセット |
+| GET | `/api/push/public-key` | 認証不要、公開VAPIDキー。未設定503 |
+| POST / DELETE | `/api/push/subscription` | account、購読登録／解除 |
+| GET / PATCH | `/api/admin/common-settings` | account、現行の管理画面設定 |
+| GET | `/api/admin/cron-history` | account、3種類の統合履歴 |
+| GET | `/api/admin/cron-runs` | account、受信削除履歴 |
+| GET | `/api/admin/messages` | account、受信履歴の管理用API |
+| DELETE | `/api/admin/messages/{messageId}` | account、受信物理削除。現行UIに削除ボタンはない |
+| GET / PATCH | `/api/admin/settings` | account、旧設定項目も残る互換API。現行画面はcommon-settingsを使用 |
+| POST | `/api/line/webhook/{lineAccountId}` | LINE署名、Webhook |
+| GET | `/api/cron/delete-expired-messages` | CRON_SECRET、期限切れ削除 |
+| GET | `/api/cron/send-daily-message` | CRON_SECRET、自動配信 |
+| GET | `/api/cron/check-unconfirmed-messages` | CRON_SECRET、確認チェック |
+
+旧`/api/admin/login`, `/api/viewer/login`, `/api/admin/session`, `/api/viewer/session`, `/api/admin/logout`, `/api/viewer/logout`の位置づけは2.1節のとおり。
+
+## 9. 画面
+
+全8画面のURL・表示順は[ホーム画面仕様](./home-screen-spec.md)を参照する。`/`はホーム、受信履歴は`/messages`。`/settings`は本人の管理画面、独立した`/admin`は廃止済み。PCタブとスマホメニューは同じ画面へ移動する。
+
+受信・送信履歴はフィルター、詳細、追加読み込みと定期更新を持つ。フィルターは画面に読み込んだ履歴へ適用する。ユーザ情報の正式な配信対象選択は保存し、手動送信の今回だけの絞り込みは正式な選択を変更しない。
+
+## 10. Cron・削除・運用の境界
+
+| Cron | UTC | JST |
+| --- | --- | --- |
+| 期限切れ削除 | `0 18 * * *` | 03:00 |
+| 自動配信 | `0 22 * * *` | 07:00 |
+| 確認チェック | `0 4 * * *` | 13:00 |
+
+`Authorization: Bearer <CRON_SECRET>`を必須とする。未設定503、不一致401。Cronは`listActiveLineAccounts()`で取得したアカウントを順番に処理し、1アカウントの失敗を記録して他の処理を続ける。有効アカウントの検索結果が0件の場合、既定アカウントへフォールバックする。応答の`results`を確認し、HTTP 200のみで全処理成功を判断しない。
+
+受信は`sentAt`降順の直近1000件を期限切れでも自動削除から保護し、1アカウント1実行で最大10000件を削除する。送信取消と手動削除にはこの保護を適用しない。送信履歴は`expiresAt <= now`を最大200件削除し、直近保護はしない。
+
+受信・送信保存期間は新規データの`expiresAt`へ適用し、既存期限を一括変更しない。ユーザ情報、カレンダー、最新確認対象、確認チェック履歴、Cron履歴、暗号化資格情報をこの削除Cronで削除する機能はない。
+
+現行の取得上限は有効アカウント100、配信ユーザ／確認対象1000、カレンダー500、Push購読500（各アカウント）。全データを無制限に処理する設計ではない。
+
+Cron画面は受信削除`cronRuns`、自動配信`sendRuns`、確認チェック`confirmationReminderRuns`を集約する。OFF／重複による自動配信スキップは新しいsendRunを作らない。送信履歴削除数は削除API応答に含まれるが、受信削除履歴と統合画面のサマリーには保存しない。
+
+## 11. 検証観点
+
+詳細ケースを作る前に以下を整理する。秘密値、Cookie、Firebaseトークン、Push鍵を証跡へ出さない。
+
+| 観点 | 検証意図 |
+| --- | --- |
+| 機能 | 認証、受信、ユーザ補完、選択、作成・配信、確認、設定、削除の経路が文書と一致する |
+| 非機能 | 外部API遅延・障害、認可、複数アカウント処理、Cron重複、非同期競合を切り分ける |
+| データ | 別アカウント分離、旧default維持、暗号化、最新runId、期限・スナップショットが一貫する |
+| UI | PC／スマホ、8画面、空状態・長文、読込中・エラー表示を確認する |
+
+| 区分 | 前提と検証意図 |
+| --- | --- |
+| 正常系 | 専用テストアカウントでログインから配信・確認・履歴まで通す |
+| 異常系 | 不正トークン、旧Cookie、別アカウントID、外部API失敗で越権・誤送信しない |
+| 境界値 | 0件、ページ上限、1000／1001件、日付変更、2月29日、保存期限境界を確認する |
+| 状態遷移 | OFF→ON、同日予約→失敗→再実行、pending→reminded→confirmed、古いpostbackを確認する |
+
+対象単体テストと型・ビルド確認を変更リスクに応じて選ぶ。E2Eは対象ケース／クロスブラウザー／全件／未実施から選定理由を明示し、同一実機・同一LINEアカウントへ並列実行しない。実送信時は対象と初期状態を固定し、requestId、runId、時刻、結果を保存する。
+
+## 12. 関連文書
+
+- [Firebase Auth移行](./firebase-auth-channel-migration.md)
+- [管理画面統合](./admin-integration-spec.md)
+- [自動送信・画面設定](./auto-broadcast-settings-spec.md)
+- [カレンダー情報](./calendar-events-spec.md)
+- [確認ボタン・未確認通知](./confirmation-reminder-spec.md)
+- [ホーム画面](./home-screen-spec.md)
+- [Gemini移行設計](./gemini-3.5-flash-lite-migration-design.md)
+- [v2.0.0要件](./requirements-v2.0.0.md)
+- [Preview確認](./preview-verification.md)
+- [文書監査結果](./documentation-audit.md)
