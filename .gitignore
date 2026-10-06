@@ -11,6 +11,8 @@ build/
 
 # test and coverage output
 coverage/
+.security-audit/
+.firebase-tmp/
 test-results/
 playwright-report/
 
