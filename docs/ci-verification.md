@@ -62,6 +62,14 @@ Node 24、Java 21以上とパッケージ／Emulator取得用ネットワーク�
 | Firebase Emulator（Windows） | 検査開始前にAndroid Studio付属Java 21のUnixDomainSockets.connectでInvalid argument。短いjava.io.tmpdirでも再現し、WindowsSelectorProvider指定でも起動失敗。SDK互換性の合否は未判定 |
 | E2E・クロスブラウザー | 未実施。前述の範囲選定による |
 
-最初のVitest・build・Node標準テストはsandboxの子プロセスspawn EPERMで失敗し、通常権限で再実行して成功した。実装の試験失敗とは区別する。GitHubでの起動・Ubuntu上のEmulator・Artifact保存は公開後に確認し、ローカルの成功から推定しない。
+最初のVitest・build・Node標準テストはsandboxの子プロセスspawn EPERMで失敗し、通常権限で再実行して成功した。実装の試験失敗とは区別する。GitHubでの起動・Ubuntu上のEmulator・Artifact保存の実測は次節に記載する。
+
+### GitHub Actionsでの確認
+
+[PR #39](https://github.com/Bamboosato/bbcafe-app/pull/39)の[CI実行 37445690364](https://github.com/Bamboosato/bbcafe-app/actions/runs/37445690364)（検証コミット`85e5450752a95ea49eed4af05eec2f0ec47c0d60`）で、Quality・Dependency security・Firebase SDK compatibilityの3ジョブがすべて成功した。Node 24／Ubuntu／Temurin 21でクリーンインストール、lint、型生成・型検査、単体124件、監査判定9件、build、実監査を確認した。security-audit Artifactの保存も確認済み。
+
+FirebaseスモークではAuth作成・再ログイン・IDトークン照合、Admin／Web Firestoreのwrite/read/deleteと相互参照を確認した。WindowsのJava起動障害とは分けて、更新SDKとgrpc overrideのUbuntu上の互換性を確認済みとする。
+
+最初のGitHub実行では、Windowsでの依存再解決によりLinuxで必要な`@emnapi/core`／`@emnapi/runtime`の任意依存がlockfileから欠落し、npm ciが失敗した。元のバージョン・integrityを保持したlockエントリーを復元し、再実行で成功した。原因は環境差による依存データの欠落。Windowsのnpm ci成功だけで判断せず、クリーンなUbuntuジョブを継続して検査する。
 
 ブランチ保護の必須チェック設定、定期監査、E2E追加は今回の設定に含めない。
