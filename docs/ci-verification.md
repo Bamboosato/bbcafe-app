@@ -82,3 +82,9 @@ FirebaseスモークではAuth作成・再ログイン・IDトークン照合、
 クリーンインストール後、lint・型生成・型検査・Vitest 20ファイル124件・監査判定9件・本番ビルドが成功した。本番依存監査は0件で成功。全依存監査はminimatchのGHSA-g3hv-75wg-m249に由来するmoderate 8 package findingsが残り失敗した。これは8種類の脆弱性ではなく、開発依存経路上の影響パッケージ数。修正範囲11.0.1以上に対し、typescript-estreeの親制約は^10.2.2のため、範囲外overrideや例外の追加で成功扱いにはしていない。
 
 本番公開・画面操作・実サービス通信は未検証。mergeおよびdeployは行っていない。
+
+### minimatch限定overrideの追加検証（2026-11-09）
+
+`@typescript-eslint/typescript-estree`配下に限定して`minimatch: 11.0.5`をoverrideした。親の^10.2.2を超えるため暫定措置とし、上流が修正版を通常依存に取り込んだ時点で解除を検討する。他のminimatch経路や監査例外は変更していない。
+
+クリーンインストール後のproduction／full監査は双方0件で成功。lint・型生成・型検査・Vitest 124件・監査判定9件・build・Firebaseスモークが成功した。Firebase CLIは書込可能な一時HOMEとXDG_CONFIG_HOMEを指定し、全体終了コード0を確認した。旧10.2.6とのglob比較255ケースは差なし。parserのprojectService／allowDefaultProject経由でも通常ファイル・隠しファイルの一致、不一致ファイルの拒否を確認した。これらは網羅的な互換性保証ではないため、最新PR headでのCI確認を別途行う。
