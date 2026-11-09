@@ -18,7 +18,7 @@ Firebase 12.19.0への更新だけではgrpc 1.9.16が残ったため、`@fireba
 
 本番依存は重大度にかかわらず1件でも失敗し、例外は適用しない。全依存は`security-audit-exception.json`のアドバイザリ・名前・バージョン・lockfileパス・dev-only区分がすべて一致した場合だけ許可する。別経路・別アドバイザリ・Critical・本番依存化・期限切れは失敗する。npm通信障害・不正JSON・件数不整合・不整合な終了コードも失敗とし、可能な範囲で報告を保存する。
 
-現在の例外は[GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)だけ。braces 3.0.3、micromatch 4.0.8、fast-glob 3.3.1、@next/eslint-plugin-next 16.3.6、eslint-config-next 16.3.6のdev経路を受け入れる。担当はBamboosato、有効期限は2026-11-05T00:00:00Z（JST 09:00）。期限の自動延長はしない。修正版の確認・依存更新・例外削除を優先し、継続が必要なら理由と新しい期限をレビューする。例外は最長30日。
+現在の例外はない。2026-11-09、最新監査からbracesの指摘が消えていることを確認し、2026-11-05に期限切れとなった旧例外を削除した。新しい例外や期限延長は追加していない。
 
 `npm run audit:security`は`.security-audit/production.json`、`full.json`と各判定レポートを保存する。GitHubではDependency securityのログとsecurity-audit Artifactを確認する。監査成功は開発依存の指摘0件を意味しない。
 
@@ -73,3 +73,12 @@ FirebaseスモークではAuth作成・再ログイン・IDトークン照合、
 最初のGitHub実行では、Windowsでの依存再解決によりLinuxで必要な`@emnapi/core`／`@emnapi/runtime`の任意依存がlockfileから欠落し、npm ciが失敗した。元のバージョン・integrityを保持したlockエントリーを復元し、再実行で成功した。原因は環境差による依存データの欠落。Windowsのnpm ci成功だけで判断せず、クリーンなUbuntuジョブを継続して検査する。
 
 ブランチ保護の必須チェック設定、定期監査、E2E追加は今回の設定に含めない。
+
+
+### 2026-11-09 依存更新の検証
+
+既存PR #40でNextとeslint-config-nextを16.4.5へ揃え、既存の依存範囲内でre2jsを2.9.1、zodを4.6.7へ更新した。新規overrideは追加していない。
+
+クリーンインストール後、lint・型生成・型検査・Vitest 20ファイル124件・監査判定9件・本番ビルドが成功した。本番依存監査は0件で成功。全依存監査はminimatchのGHSA-g3hv-75wg-m249に由来するmoderate 8 package findingsが残り失敗した。これは8種類の脆弱性ではなく、開発依存経路上の影響パッケージ数。修正範囲11.0.1以上に対し、typescript-estreeの親制約は^10.2.2のため、範囲外overrideや例外の追加で成功扱いにはしていない。
+
+本番公開・画面操作・実サービス通信は未検証。mergeおよびdeployは行っていない。
